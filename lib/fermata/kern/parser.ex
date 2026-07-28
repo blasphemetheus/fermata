@@ -258,10 +258,12 @@ defmodule Fermata.Kern.Parser do
     end
   end
 
+  @steps %{"A" => :A, "B" => :B, "C" => :C, "D" => :D, "E" => :E, "F" => :F, "G" => :G}
+
   defp extract_pitch(text) do
     case Regex.run(~r/([a-g]+|[A-G]+)/, text) do
       [_, letters] ->
-        step = letters |> String.first() |> String.upcase() |> String.to_existing_atom()
+        step = @steps |> Map.fetch!(letters |> String.first() |> String.upcase())
         count = String.length(letters)
 
         octave =

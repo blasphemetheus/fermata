@@ -24,3 +24,9 @@ fermata-*.tar
 
 # generated render artifacts
 /examples/out/
+
+# downloaded corpora and packed training shards
+/data/
+
+# ad-hoc downloaded kern files in the repo root
+/*.krn
