@@ -1,0 +1,152 @@
+defmodule Fermata.MusicXML.Writer do
+  @moduledoc """
+  Emits MusicXML 4.0 `score-partwise` from the score IR.
+
+  Covers the Phase 0 subset: parts, measures, key/time/clef attributes,
+  spelled notes with ties and chords, rests. Emission is direct iodata —
+  the element set is small and fixed, so no XML builder dependency.
+  """
+
+  alias Fermata.{Duration, Instruments, Measure, Note, Part, Rest, Score}
+
+  @doctype ~s(<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">)
+
+  @spec to_xml(Score.t()) :: String.t()
+  def to_xml(%Score{} = score) do
+    IO.iodata_to_binary([
+      ~s(<?xml version="1.0" encoding="UTF-8"?>\n),
+      @doctype,
+      "\n",
+      ~s(<score-partwise version="4.0">\n),
+      work(score),
+      identification(score),
+      part_list(score.parts),
+      Enum.with_index(score.parts, 1) |> Enum.map(&part/1),
+      "</score-partwise>\n"
+    ])
+  end
+
+  defp work(%Score{title: nil}), do: []
+  defp work(%Score{title: title}), do: ["<work><work-title>", escape(title), "</work-title></work>\n"]
+
+  defp identification(%Score{composer: nil}), do: []
+
+  defp identification(%Score{composer: composer}) do
+    [
+      ~s(<identification><creator type="composer">),
+      escape(composer),
+      "</creator></identification>\n"
+    ]
+  end
+
+  defp part_list(parts) do
+    [
+      "<part-list>\n",
+      parts
+      |> Enum.with_index(1)
+      |> Enum.map(fn {%Part{} = p, idx} ->
+        name = p.name || Instruments.display_name(p.instrument)
+
+        [
+          ~s(<score-part id="P#{idx}"><part-name>),
+          escape(name),
+          "</part-name></score-part>\n"
+        ]
+      end),
+      "</part-list>\n"
+    ]
+  end
+
+  defp part({%Part{measures: measures}, idx}) do
+    [
+      ~s(<part id="P#{idx}">\n),
+      Enum.map(measures, &measure/1),
+      "</part>\n"
+    ]
+  end
+
+  defp measure(%Measure{} = m) do
+    [
+      ~s(<measure number="#{m.number}">\n),
+      attributes(m),
+      Enum.map(m.events, &event/1),
+      "</measure>\n"
+    ]
+  end
+
+  defp attributes(%Measure{key: nil, time: nil, clef: nil}), do: []
+
+  defp attributes(%Measure{} = m) do
+    [
+      "<attributes>\n",
+      # divisions must precede key/time/clef per the DTD content model;
+      # emit it whenever any attribute is stated so measures stay
+      # self-describing.
+      "<divisions>#{Duration.divisions()}</divisions>\n",
+      if(m.key, do: "<key><fifths>#{m.key}</fifths></key>\n", else: []),
+      case m.time do
+        nil -> []
+        {beats, beat_type} -> "<time><beats>#{beats}</beats><beat-type>#{beat_type}</beat-type></time>\n"
+      end,
+      clef(m.clef),
+      "</attributes>\n"
+    ]
+  end
+
+  defp clef(nil), do: []
+  defp clef(:treble), do: "<clef><sign>G</sign><line>2</line></clef>\n"
+  defp clef(:bass), do: "<clef><sign>F</sign><line>4</line></clef>\n"
+  defp clef(:alto), do: "<clef><sign>C</sign><line>3</line></clef>\n"
+  defp clef(:tenor), do: "<clef><sign>C</sign><line>4</line></clef>\n"
+
+  defp clef(:treble_8vb),
+    do: "<clef><sign>G</sign><line>2</line><clef-octave-change>-1</clef-octave-change></clef>\n"
+
+  defp event(%Note{duration: {type, dots} = dur} = n) do
+    [
+      "<note>",
+      if(n.chord, do: "<chord/>", else: []),
+      "<pitch><step>#{n.step}</step>",
+      if(n.alter != 0, do: "<alter>#{n.alter}</alter>", else: []),
+      "<octave>#{n.octave}</octave></pitch>",
+      "<duration>#{Duration.divisions_for(dur)}</duration>",
+      tie_elements(n.tie),
+      "<type>#{type}</type>",
+      List.duplicate("<dot/>", dots),
+      tie_notations(n.tie),
+      "</note>\n"
+    ]
+  end
+
+  defp event(%Rest{duration: {type, dots} = dur}) do
+    [
+      "<note><rest/>",
+      "<duration>#{Duration.divisions_for(dur)}</duration>",
+      "<type>#{type}</type>",
+      List.duplicate("<dot/>", dots),
+      "</note>\n"
+    ]
+  end
+
+  # <tie> is the sounding tie (ordered before <type> in the DTD);
+  # <notations><tied> is the engraved arc (ordered after <dot/>).
+  # Both are needed for renderers to draw and play the tie.
+  defp tie_elements(nil), do: []
+  defp tie_elements(:start), do: ~s(<tie type="start"/>)
+  defp tie_elements(:stop), do: ~s(<tie type="stop"/>)
+  defp tie_elements(:both), do: ~s(<tie type="stop"/><tie type="start"/>)
+
+  defp tie_notations(nil), do: []
+  defp tie_notations(:start), do: ~s(<notations><tied type="start"/></notations>)
+  defp tie_notations(:stop), do: ~s(<notations><tied type="stop"/></notations>)
+
+  defp tie_notations(:both),
+    do: ~s(<notations><tied type="stop"/><tied type="start"/></notations>)
+
+  defp escape(text) do
+    text
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+  end
+end

@@ -1,0 +1,9 @@
+%{
+  "axon": {:hex, :axon, "0.8.1", "c4a975e62a14ab6c374997b77367ec3a4c2740952ac474d3b0f202c91b7f75c4", [:mix], [{:kino, "~> 0.7", [hex: :kino, repo: "hexpm", optional: true]}, {:kino_vega_lite, "~> 0.1.7", [hex: :kino_vega_lite, repo: "hexpm", optional: true]}, {:nx, "~> 0.10", [hex: :nx, repo: "hexpm", optional: false]}, {:polaris, "~> 0.1", [hex: :polaris, repo: "hexpm", optional: false]}, {:table_rex, "~> 3.1 or ~> 4.1", [hex: :table_rex, repo: "hexpm", optional: true]}], "hexpm", "682a3517489300507ac9345f28341e7fa95bc5b4960d645816074ce551795d37"},
+  "complex": {:hex, :complex, "0.7.0", "695632ef9487517aa5d57edd1697801079d622414cb2e1a7cf538b1f9a50f205", [:mix], [], "hexpm", "0ee39c0803129f546e7f3f640da8f021c9e659402bf59da6f7f2c4848f068f8d"},
+  "nx": {:hex, :nx, "0.13.0", "43c57f529f17139821f6ed01a8aba6e045fef6722700c928cec2e2e3d2ee9560", [:mix], [{:complex, "~> 0.7", [hex: :complex, repo: "hexpm", optional: false]}, {:telemetry, "~> 0.4.0 or ~> 1.0", [hex: :telemetry, repo: "hexpm", optional: false]}], "hexpm", "38d2f37ee7e2f3aaa86b96f125643ffbca56a89576cd24d83b452597397b4fbd"},
+  "polaris": {:hex, :polaris, "0.1.0", "dca61b18e3e801ecdae6ac9f0eca5f19792b44a5cb4b8d63db50fc40fc038d22", [:mix], [{:nx, "~> 0.5", [hex: :nx, repo: "hexpm", optional: false]}], "hexpm", "13ef2b166650e533cb24b10e2f3b8ab4f2f449ba4d63156e8c569527f206e2c2"},
+  "saxy": {:hex, :saxy, "1.6.1", "742eff28f553c066d0b54e84662dbf384a1d1f38595472ed15f6e0a33038bbe1", [:mix], [], "hexpm", "8989d504424ba29460a61950f8968380651413fa05e63b6118084db057da1a6b"},
+  "stream_data": {:hex, :stream_data, "1.4.0", "026f929db613aabea6208012ae9b8970d3fd5f88b3bdf26831bc536f98c42036", [:mix], [], "hexpm", "2b0ee3a340dcce1c8cf6302a763ee757d1e01c54d6e16d9069062509d68b1dc9"},
+  "telemetry": {:hex, :telemetry, "1.4.2", "a0cb522801dffb1c49fe6e30561badffc7b6d0e180db1300df759faa22062855", [:rebar3], [], "hexpm", "928f6495066506077862c0d1646609eed891a4326bee3126ba54b60af61febb1"},
+}
