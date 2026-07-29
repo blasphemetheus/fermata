@@ -7,9 +7,13 @@ defmodule Fermata.MusicXML.Parser do
   `<type>` + `<dot/>` when present (independent of the file's divisions),
   falling back to `<duration>` scaled by the file's `<divisions>`.
 
+  Multi-voice measures are read via `<voice>`; `<backup>` needs no special
+  handling because voices are written in document order, one group after
+  another, which is exactly the IR's voice-grouped event order.
+
   Not yet handled (fine for our own writer's output, needed later for
-  PDMX ingestion): `<backup>`/`<forward>` and multi-voice measures,
-  tuplets, grace notes.
+  PDMX ingestion): `<forward>`, interleaved (non-grouped) voices, tuplets,
+  grace notes.
   """
 
   @behaviour Saxy.Handler
@@ -93,7 +97,7 @@ defmodule Fermata.MusicXML.Parser do
   end
 
   defp start_element("note", _attrs, state),
-    do: %{state | note: %{dots: 0, ties: [], chord: false, rest: false, alter: 0}}
+    do: %{state | note: %{dots: 0, ties: [], chord: false, rest: false, alter: 0, voice: 1}}
 
   defp start_element("chord", _attrs, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note.chord, true)
@@ -180,6 +184,9 @@ defmodule Fermata.MusicXML.Parser do
   defp end_element("type", text, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note[:type], String.to_existing_atom(text))
 
+  defp end_element("voice", text, %{note: note} = state) when not is_nil(note),
+    do: put_in(state.note[:voice], String.to_integer(text))
+
   defp end_element("note", _text, %{note: note} = state) do
     event = build_event(note, state.divisions)
     %{state | note: nil, cur_events: [event | state.cur_events]}
@@ -197,7 +204,7 @@ defmodule Fermata.MusicXML.Parser do
   # ── Builders ────────────────────────────────────────────────────────
 
   defp build_event(%{rest: true} = note, divisions),
-    do: %Rest{duration: duration_of(note, divisions)}
+    do: %Rest{duration: duration_of(note, divisions), voice: note.voice}
 
   defp build_event(note, divisions) do
     %Note{
@@ -206,7 +213,8 @@ defmodule Fermata.MusicXML.Parser do
       octave: Map.fetch!(note, :octave),
       duration: duration_of(note, divisions),
       chord: note.chord,
-      tie: resolve_ties(note.ties)
+      tie: resolve_ties(note.ties),
+      voice: note.voice
     }
   end
 

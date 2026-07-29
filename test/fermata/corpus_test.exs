@@ -26,7 +26,9 @@ defmodule Fermata.CorpusTest do
 
   test "ingest_files records parse failures with typed reasons", %{dir: dir} do
     bad = Path.join(System.tmp_dir!(), "bad_#{System.unique_integer([:positive])}.krn")
-    File.write!(bad, "**kern\n*^\t*\n*-\t*-\n")
+    # A tuplet duration — still unsupported, unlike the *^ split this
+    # fixture used before spine splits were implemented.
+    File.write!(bad, "**kern\n12c\n*-\n")
     on_exit(fn -> File.rm!(bad) end)
 
     {:ok, index} = Corpus.ingest_files([@chorale, bad], dir, :kern)

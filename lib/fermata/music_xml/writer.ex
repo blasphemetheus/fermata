@@ -69,9 +69,40 @@ defmodule Fermata.MusicXML.Writer do
     [
       ~s(<measure number="#{m.number}">\n),
       attributes(m),
-      Enum.map(m.events, &event/1),
+      voice_groups(m),
       "</measure>\n"
     ]
+  end
+
+  # MusicXML has no parallel notation: voices are written sequentially and
+  # the cursor is rewound with <backup> between them. The rewind is the
+  # preceding group's own duration, so voices need not be equal length.
+  defp voice_groups(%Measure{} = m) do
+    groups = Measure.voice_groups(m)
+    # A lone voice needs no <voice> element at all; once there are two,
+    # every note must be labelled or renderers guess at the split.
+    explicit? = length(groups) > 1
+
+    groups
+    |> Enum.map_reduce(nil, fn {voice, events}, rewind ->
+      label = if explicit?, do: voice, else: nil
+
+      iodata = [
+        if(rewind, do: "<backup><duration>#{rewind}</duration></backup>\n", else: []),
+        Enum.map(events, &event(&1, label))
+      ]
+
+      {iodata, group_divisions(events)}
+    end)
+    |> elem(0)
+  end
+
+  # Chord members sound with the preceding note, so they consume no time.
+  defp group_divisions(events) do
+    events
+    |> Enum.reject(&match?(%Note{chord: true}, &1))
+    |> Enum.map(&Duration.divisions_for(&1.duration))
+    |> Enum.sum()
   end
 
   defp attributes(%Measure{key: nil, time: nil, clef: nil}), do: []
@@ -102,7 +133,8 @@ defmodule Fermata.MusicXML.Writer do
   defp clef(:treble_8vb),
     do: "<clef><sign>G</sign><line>2</line><clef-octave-change>-1</clef-octave-change></clef>\n"
 
-  defp event(%Note{duration: {type, dots} = dur} = n) do
+  # <voice> sits after <tie> and before <type> in the DTD content model.
+  defp event(%Note{duration: {type, dots} = dur} = n, voice) do
     [
       "<note>",
       if(n.chord, do: "<chord/>", else: []),
@@ -111,6 +143,7 @@ defmodule Fermata.MusicXML.Writer do
       "<octave>#{n.octave}</octave></pitch>",
       "<duration>#{Duration.divisions_for(dur)}</duration>",
       tie_elements(n.tie),
+      voice_element(voice),
       "<type>#{type}</type>",
       List.duplicate("<dot/>", dots),
       tie_notations(n.tie),
@@ -118,15 +151,19 @@ defmodule Fermata.MusicXML.Writer do
     ]
   end
 
-  defp event(%Rest{duration: {type, dots} = dur}) do
+  defp event(%Rest{duration: {type, dots} = dur}, voice) do
     [
       "<note><rest/>",
       "<duration>#{Duration.divisions_for(dur)}</duration>",
+      voice_element(voice),
       "<type>#{type}</type>",
       List.duplicate("<dot/>", dots),
       "</note>\n"
     ]
   end
+
+  defp voice_element(nil), do: []
+  defp voice_element(voice), do: "<voice>#{voice}</voice>"
 
   # <tie> is the sounding tie (ordered before <type> in the DTD);
   # <notations><tied> is the engraved arc (ordered after <dot/>).

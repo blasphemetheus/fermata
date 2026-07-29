@@ -13,6 +13,11 @@ defmodule Fermata.Score do
     * Durations are **notated values** (`{type, dots}`), never ticks.
     * Key/time/clef live on measures and are `nil` except where they are
       (re)stated — matching how notation and MusicXML both work.
+    * Events carry a `voice` (1-based). Multiple voices on one staff
+      (divisi, keyboard hands) are rhythmically independent streams that
+      share a measure. Within a measure, events of the same voice are
+      **contiguous** — the tokenizer and MusicXML writer both emit
+      voice-grouped and rely on it for exact round-trips.
   """
 
   defstruct title: nil, composer: nil, parts: []
@@ -59,6 +64,18 @@ defmodule Fermata.Measure do
 
   @clefs [:treble, :bass, :alto, :tenor, :treble_8vb]
   def clefs, do: @clefs
+
+  @doc """
+  Events grouped into `{voice, events}` pairs in order of first
+  appearance. Since same-voice events are contiguous by IR invariant,
+  this is a chunk, not a sort — a measure that violates the invariant
+  yields the same voice twice rather than silently merging the groups.
+  """
+  def voice_groups(%__MODULE__{events: events}) do
+    events
+    |> Enum.chunk_by(& &1.voice)
+    |> Enum.map(fn [first | _] = group -> {first.voice, group} end)
+  end
 end
 
 defmodule Fermata.Note do
@@ -66,10 +83,11 @@ defmodule Fermata.Note do
   A spelled note. `chord: true` means this note sounds together with the
   preceding event (MusicXML `<chord/>` semantics). `tie` marks this note
   as tied to the next (`:start`), from the previous (`:stop`), or both.
+  `voice` is the 1-based voice within the part's staff.
   """
 
   @enforce_keys [:step, :octave, :duration]
-  defstruct [:step, :octave, :duration, alter: 0, tie: nil, chord: false]
+  defstruct [:step, :octave, :duration, alter: 0, tie: nil, chord: false, voice: 1]
 
   @type step :: :C | :D | :E | :F | :G | :A | :B
   @type t :: %__MODULE__{
@@ -78,7 +96,8 @@ defmodule Fermata.Note do
           octave: 0..8,
           duration: Fermata.Duration.t(),
           tie: :start | :stop | :both | nil,
-          chord: boolean()
+          chord: boolean(),
+          voice: pos_integer()
         }
 
   @steps [:C, :D, :E, :F, :G, :A, :B]
@@ -86,12 +105,12 @@ defmodule Fermata.Note do
 end
 
 defmodule Fermata.Rest do
-  @moduledoc "A rest."
+  @moduledoc "A rest. `voice` is the 1-based voice within the part's staff."
 
   @enforce_keys [:duration]
-  defstruct [:duration]
+  defstruct [:duration, voice: 1]
 
-  @type t :: %__MODULE__{duration: Fermata.Duration.t()}
+  @type t :: %__MODULE__{duration: Fermata.Duration.t(), voice: pos_integer()}
 end
 
 defmodule Fermata.Duration do

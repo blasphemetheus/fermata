@@ -23,6 +23,10 @@ defmodule Fermata.Tokenizer do
       [:chord]? {:pitch, s, a, o} {:dur, t, d} [:tie_start | :tie_stop]*
       :rest {:dur, t, d}
 
+  Multi-voice measures (divisi, keyboard hands) emit a `{:voice, n}`
+  marker before each voice group after the first; voice 1 is implicit, so
+  single-voice music tokenizes exactly as it did before voices existed.
+
   `encode/1` → list of symbolic tokens; `encode_ids/1` → integer ids.
   `decode/1` / `decode_ids/1` invert them. Round-trip is exact.
   """
@@ -72,8 +76,15 @@ defmodule Fermata.Tokenizer do
         &is_nil/1
       )
 
-    attrs ++ Enum.flat_map(m.events, &encode_event/1)
+    attrs ++ Enum.flat_map(Measure.voice_groups(m), &encode_voice_group/1)
   end
+
+  # Voice 1 is the implicit default, so it needs no marker — which keeps
+  # single-voice sequences byte-identical to the pre-voice tokenizer.
+  defp encode_voice_group({1, events}), do: Enum.flat_map(events, &encode_event/1)
+
+  defp encode_voice_group({voice, events}),
+    do: [{:voice, voice} | Enum.flat_map(events, &encode_event/1)]
 
   defp encode_event(%Note{} = n) do
     chord = if n.chord, do: [:chord], else: []
@@ -114,7 +125,7 @@ defmodule Fermata.Tokenizer do
         %Part{instrument: i, name: Fermata.Instruments.display_name(i)}
       end
 
-    measures_by_part = decode_measures(rest, %{}, 0, nil, nil)
+    measures_by_part = decode_measures(rest, %{}, 0, nil, nil, 1)
 
     parts =
       parts
@@ -127,58 +138,63 @@ defmodule Fermata.Tokenizer do
   end
 
   # State: acc %{part_idx => [measures, newest first]}, measure_number,
-  # current part idx, current measure-under-construction.
-  defp decode_measures([:measure | rest], acc, m_num, cur_part, cur_measure) do
+  # current part idx, current measure-under-construction, current voice
+  # (reset to 1 at each part column — voice numbering is per measure).
+  defp decode_measures([:measure | rest], acc, m_num, cur_part, cur_measure, _voice) do
     acc = flush(acc, cur_part, cur_measure)
-    decode_measures(rest, acc, m_num + 1, nil, nil)
+    decode_measures(rest, acc, m_num + 1, nil, nil, 1)
   end
 
-  defp decode_measures([{:part, idx} | rest], acc, m_num, cur_part, cur_measure) do
+  defp decode_measures([{:part, idx} | rest], acc, m_num, cur_part, cur_measure, _voice) do
     acc = flush(acc, cur_part, cur_measure)
-    decode_measures(rest, acc, m_num, idx, %Measure{number: m_num})
+    decode_measures(rest, acc, m_num, idx, %Measure{number: m_num}, 1)
   end
 
-  defp decode_measures([:eos], acc, _m_num, cur_part, cur_measure) do
+  defp decode_measures([:eos], acc, _m_num, cur_part, cur_measure, _voice) do
     acc = flush(acc, cur_part, cur_measure)
     Map.new(acc, fn {idx, measures} -> {idx, Enum.reverse(measures)} end)
   end
 
-  defp decode_measures([token | rest], acc, m_num, cur_part, %Measure{} = m) do
+  defp decode_measures([{:voice, v} | rest], acc, m_num, cur_part, %Measure{} = m, _voice) do
+    decode_measures(rest, acc, m_num, cur_part, m, v)
+  end
+
+  defp decode_measures([token | rest], acc, m_num, cur_part, %Measure{} = m, voice) do
     m =
       case token do
         {:key, fifths} -> %{m | key: fifths}
         {:time, n, d} -> %{m | time: {n, d}}
         {:clef, clef} -> %{m | clef: clef}
         :chord -> add_event(m, {:pending_chord})
-        {:pitch, s, a, o} -> add_pitch(m, s, a, o)
-        {:dur, type, dots} -> set_duration(m, {type, dots})
+        {:pitch, s, a, o} -> add_pitch(m, s, a, o, voice)
+        {:dur, type, dots} -> set_duration(m, {type, dots}, voice)
         :tie_start -> update_tie(m, :start)
         :tie_stop -> update_tie(m, :stop)
         :rest -> add_event(m, {:pending_rest})
       end
 
-    decode_measures(rest, acc, m_num, cur_part, m)
+    decode_measures(rest, acc, m_num, cur_part, m, voice)
   end
 
   # Events are accumulated newest-first in m.events, with in-progress
   # markers replaced as their remaining tokens arrive.
   defp add_event(%Measure{events: events} = m, marker), do: %{m | events: [marker | events]}
 
-  defp add_pitch(%Measure{events: [{:pending_chord} | events]} = m, s, a, o) do
-    note = %Note{step: s, alter: a, octave: o, duration: :pending, chord: true}
+  defp add_pitch(%Measure{events: [{:pending_chord} | events]} = m, s, a, o, voice) do
+    note = %Note{step: s, alter: a, octave: o, duration: :pending, chord: true, voice: voice}
     %{m | events: [note | events]}
   end
 
-  defp add_pitch(%Measure{events: events} = m, s, a, o) do
-    note = %Note{step: s, alter: a, octave: o, duration: :pending}
+  defp add_pitch(%Measure{events: events} = m, s, a, o, voice) do
+    note = %Note{step: s, alter: a, octave: o, duration: :pending, voice: voice}
     %{m | events: [note | events]}
   end
 
-  defp set_duration(%Measure{events: [{:pending_rest} | events]} = m, dur) do
-    %{m | events: [%Rest{duration: dur} | events]}
+  defp set_duration(%Measure{events: [{:pending_rest} | events]} = m, dur, voice) do
+    %{m | events: [%Rest{duration: dur, voice: voice} | events]}
   end
 
-  defp set_duration(%Measure{events: [%Note{duration: :pending} = n | events]} = m, dur) do
+  defp set_duration(%Measure{events: [%Note{duration: :pending} = n | events]} = m, dur, _voice) do
     %{m | events: [%{n | duration: dur} | events]}
   end
 

@@ -1,7 +1,7 @@
 defmodule Fermata.Kern.ParserTest do
   use ExUnit.Case, async: true
 
-  alias Fermata.{Kern, Measure, Note, Rest, Tokenizer}
+  alias Fermata.{Kern, Measure, Note, Part, Rest, Tokenizer}
 
   # SATB chorale phrase in kern: spines low-to-high (bass first), C major,
   # 4/4, with a tie, a chord, a rest, and accidentals.
@@ -91,14 +91,105 @@ defmodule Fermata.Kern.ParserTest do
     assert %{round_tripped | title: score.title, composer: score.composer} == score
   end
 
-  test "rejects spine manipulators rather than mis-parsing" do
+  test "ignores non-kern companion spines" do
     kern = """
-    **kern\t**kern
-    *^\t*
-    *-\t*-
+    **kern\t**dynam\t**kern
+    *I"Violin\t*\t*I"Cello
+    4c\tp\t4C
+    *-\t*-\t*-
     """
 
-    assert {:error, {:unsupported, :spine_manipulation}} = Kern.Parser.parse(kern)
+    assert {:ok, score} = Kern.Parser.parse(kern)
+    # Two parts, not three — and the dynamics column contributed nothing
+    assert length(score.parts) == 2
+    assert Enum.map(score.parts, & &1.name) == ["Cello", "Violin"]
+
+    for part <- score.parts do
+      assert [%Measure{events: [%Note{}]}] = part.measures
+    end
+  end
+
+  test "*^ split becomes a second voice, *v merge ends it" do
+    kern = """
+    **kern
+    =1
+    *^
+    4c\t4e
+    4d\t4f
+    *v\t*v
+    =2
+    2g
+    *-
+    """
+
+    assert {:ok, score} = Kern.Parser.parse(kern)
+    assert [%Part{measures: [m1, m2]}] = score.parts
+
+    # Measure 1: voice 1 then voice 2, each contiguous
+    assert [
+             %Note{step: :C, voice: 1},
+             %Note{step: :D, voice: 1},
+             %Note{step: :E, voice: 2},
+             %Note{step: :F, voice: 2}
+           ] = m1.events
+
+    # After the merge the part is single-voice again
+    assert [%Note{step: :G, voice: 1}] = m2.events
+  end
+
+  test "a voice that starts mid-measure is padded with leading rests" do
+    kern = """
+    **kern
+    =1
+    4c
+    *^
+    4d\t4f
+    4e\t4g
+    *v\t*v
+    *-
+    """
+
+    assert {:ok, score} = Kern.Parser.parse(kern)
+    assert [%Part{measures: [m1]}] = score.parts
+
+    {1, voice_1} = Enum.at(Measure.voice_groups(m1), 0)
+    {2, voice_2} = Enum.at(Measure.voice_groups(m1), 1)
+
+    assert Enum.map(voice_1, & &1.step) == [:C, :D, :E]
+
+    # Voice 2 enters a quarter note into the measure, so it needs a
+    # quarter rest to land on beat 2 — without it the renderer would
+    # stack F against C instead of against D.
+    assert [%Rest{duration: {:quarter, 0}}, %Note{step: :F}, %Note{step: :G}] = voice_2
+  end
+
+  test "multi-voice kern survives the tokenizer round-trip" do
+    kern = """
+    **kern
+    =1
+    *^
+    4c\t4e
+    4d\t4f
+    *v\t*v
+    *-
+    """
+
+    assert {:ok, score} = Kern.Parser.parse(kern)
+    round_tripped = score |> Tokenizer.encode_ids() |> Tokenizer.decode_ids()
+
+    assert %{round_tripped | title: score.title, composer: score.composer} == score
+  end
+
+  test "still rejects spine exchange and addition" do
+    for manipulator <- ["*x", "*+"] do
+      kern = """
+      **kern\t**kern
+      #{manipulator}\t*
+      *-\t*-
+      """
+
+      assert {:error, {:unsupported, :spine_manipulation}} = Kern.Parser.parse(kern)
+    end
   end
 
   test "rejects tuplet durations rather than mis-parsing" do

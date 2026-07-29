@@ -19,17 +19,23 @@ defmodule Fermata.Vocab do
     * `{:pitch, step, alter, octave}`
     * `{:dur, type, dots}`
     * `:chord`, `:tie_start`, `:tie_stop`, `:rest`
+    * `{:voice, 1..8}` — "the following events are voice N of this part"
+
+  Appended after the Phase 0 block (ids 0..526 are frozen: corpus shards
+  on disk hold those ids). Appending is safe; reordering is not.
   """
 
   alias Fermata.{Duration, Instruments, Measure, Note}
 
   @max_parts 32
+  @max_voices 8
   @octaves 0..8
   @alters -2..2
   @time_numerators 1..16
   @time_denominators [1, 2, 4, 8, 16, 32]
 
   def max_parts, do: @max_parts
+  def max_voices, do: @max_voices
 
   @doc "The full token list, in id order."
   def tokens do
@@ -50,8 +56,12 @@ defmodule Fermata.Vocab do
           do: {:pitch, step, alter, octave}
 
     durations = for type <- Duration.types(), dots <- 0..2, do: {:dur, type, dots}
+    voices = for v <- 1..@max_voices, do: {:voice, v}
 
-    specials ++ keys ++ times ++ clefs ++ instruments ++ parts ++ pitches ++ durations
+    phase_0 = specials ++ keys ++ times ++ clefs ++ instruments ++ parts ++ pitches ++ durations
+
+    # APPEND-ONLY past this point — see @moduledoc.
+    phase_0 ++ voices
   end
 
   @doc "Map of token → integer id."
