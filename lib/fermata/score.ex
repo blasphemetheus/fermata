@@ -30,15 +30,24 @@ defmodule Fermata.Score do
 end
 
 defmodule Fermata.Part do
-  @moduledoc "A single part (staff/instrument line) in a score."
+  @moduledoc """
+  A single part (staff/instrument line) in a score.
+
+  `transpose` is set only on a part whose notes are at **written** pitch
+  for a transposing instrument; it holds that instrument's written →
+  sounding interval, which the MusicXML writer emits as `<transpose>` so
+  readers know what the part sounds like. `nil` means the notes are
+  already at concert pitch. See `Fermata.Transpose`.
+  """
 
   @enforce_keys [:instrument]
-  defstruct [:instrument, name: nil, measures: []]
+  defstruct [:instrument, name: nil, measures: [], transpose: nil]
 
   @type t :: %__MODULE__{
           instrument: atom(),
           name: String.t() | nil,
-          measures: [Fermata.Measure.t()]
+          measures: [Fermata.Measure.t()],
+          transpose: Fermata.Interval.t() | nil
         }
 end
 

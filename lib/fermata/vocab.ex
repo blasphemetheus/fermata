@@ -46,7 +46,11 @@ defmodule Fermata.Vocab do
       for n <- @time_numerators, d <- @time_denominators, do: {:time, n, d}
 
     clefs = for c <- Measure.clefs(), do: {:clef, c}
-    instruments = for i <- Instruments.all(), do: {:instrument, i}
+    # Only the frozen Phase 0 instruments sit here. Instruments added
+    # later append at the very end, because inserting a token *inside*
+    # this block would shift the id of every pitch and duration token
+    # after it — silently invalidating corpora and any trained embedding.
+    instruments = for i <- Instruments.phase_0(), do: {:instrument, i}
     parts = for n <- 0..(@max_parts - 1), do: {:part, n}
 
     pitches =
@@ -56,12 +60,14 @@ defmodule Fermata.Vocab do
           do: {:pitch, step, alter, octave}
 
     durations = for type <- Duration.types(), dots <- 0..2, do: {:dur, type, dots}
-    voices = for v <- 1..@max_voices, do: {:voice, v}
 
     phase_0 = specials ++ keys ++ times ++ clefs ++ instruments ++ parts ++ pitches ++ durations
 
     # APPEND-ONLY past this point — see @moduledoc.
-    phase_0 ++ voices
+    voices = for v <- 1..@max_voices, do: {:voice, v}
+    later_instruments = for i <- Instruments.added(), do: {:instrument, i}
+
+    phase_0 ++ voices ++ later_instruments
   end
 
   @doc "Map of token → integer id."

@@ -70,6 +70,7 @@ defmodule Fermata.Kern.Parser do
   defp new_part do
     %{
       instrument: nil,
+      name: nil,
       pending: %{key: nil, time: nil, clef: nil},
       measures: [],
       # voice => events, newest-first
@@ -220,7 +221,20 @@ defmodule Fermata.Kern.Parser do
 
   # ── Interpretations ─────────────────────────────────────────────────
 
-  defp interpret(part, "*I\"" <> name), do: %{part | instrument: name}
+  # *I"Name is a human-facing display name (keep it verbatim); *Icode is a
+  # Humdrum instrument code (*Ivioln, *Icello, *Iclars) whose only use is
+  # identifying the instrument. Both resolve through the registry's alias
+  # table, so a file using only codes gets real instruments instead of a
+  # score full of "Voice".
+  defp interpret(part, "*I\"" <> name),
+    do: %{part | instrument: Fermata.Instruments.from_name(name), name: name}
+
+  defp interpret(part, "*I" <> code) do
+    case Fermata.Instruments.find(code) do
+      {:ok, id} -> %{part | instrument: id}
+      :error -> part
+    end
+  end
 
   defp interpret(part, "*clef" <> clef) do
     clef =
@@ -486,15 +500,11 @@ defmodule Fermata.Kern.Parser do
       |> Enum.reverse()
       |> Enum.map(fn pid ->
         part = Map.fetch!(state.parts, pid)
-
-        instrument =
-          if part.instrument,
-            do: Fermata.Instruments.from_name(part.instrument),
-            else: :voice
+        instrument = part.instrument || :voice
 
         %Part{
           instrument: instrument,
-          name: part.instrument || Fermata.Instruments.display_name(instrument),
+          name: part.name || Fermata.Instruments.display_name(instrument),
           measures: Enum.reverse(part.measures)
         }
       end)

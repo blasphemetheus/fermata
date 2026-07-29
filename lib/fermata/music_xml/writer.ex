@@ -7,7 +7,7 @@ defmodule Fermata.MusicXML.Writer do
   the element set is small and fixed, so no XML builder dependency.
   """
 
-  alias Fermata.{Duration, Instruments, Measure, Note, Part, Rest, Score}
+  alias Fermata.{Duration, Instruments, Interval, Measure, Note, Part, Rest, Score}
 
   @doctype ~s(<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">)
 
@@ -57,18 +57,26 @@ defmodule Fermata.MusicXML.Writer do
     ]
   end
 
-  defp part({%Part{measures: measures}, idx}) do
+  defp part({%Part{measures: measures} = p, idx}) do
     [
       ~s(<part id="P#{idx}">\n),
-      Enum.map(measures, &measure/1),
+      measures
+      |> Enum.with_index()
+      # A transposing part declares <transpose> once, in its first
+      # measure; without it a reader cannot know the written notes are
+      # not the sounding ones.
+      |> Enum.map(fn
+        {m, 0} -> measure(m, p.transpose)
+        {m, _} -> measure(m, nil)
+      end),
       "</part>\n"
     ]
   end
 
-  defp measure(%Measure{} = m) do
+  defp measure(%Measure{} = m, transpose) do
     [
       ~s(<measure number="#{m.number}">\n),
-      attributes(m),
+      attributes(m, transpose),
       voice_groups(m),
       "</measure>\n"
     ]
@@ -105,9 +113,9 @@ defmodule Fermata.MusicXML.Writer do
     |> Enum.sum()
   end
 
-  defp attributes(%Measure{key: nil, time: nil, clef: nil}), do: []
+  defp attributes(%Measure{key: nil, time: nil, clef: nil}, nil), do: []
 
-  defp attributes(%Measure{} = m) do
+  defp attributes(%Measure{} = m, transpose) do
     [
       "<attributes>\n",
       # divisions must precede key/time/clef per the DTD content model;
@@ -120,7 +128,28 @@ defmodule Fermata.MusicXML.Writer do
         {beats, beat_type} -> "<time><beats>#{beats}</beats><beat-type>#{beat_type}</beat-type></time>\n"
       end,
       clef(m.clef),
+      transpose_element(transpose),
       "</attributes>\n"
+    ]
+  end
+
+  # <transpose> is written -> sounding, matching how the IR stores it.
+  # Only whole octaves beyond the simple interval go in <octave-change>,
+  # so a Bb clarinet emits the conventional diatonic -1 / chromatic -2
+  # rather than an equivalent-but-odd 6/10/-1. Truncating division, not
+  # floor: reduction has to move toward zero to keep the sign of the
+  # simple interval, which is the direction the instrument transposes.
+  defp transpose_element(nil), do: []
+
+  defp transpose_element(%Interval{diatonic: d, chromatic: c}) do
+    octaves = div(d, 7)
+
+    [
+      "<transpose>",
+      "<diatonic>#{d - 7 * octaves}</diatonic>",
+      "<chromatic>#{c - 12 * octaves}</chromatic>",
+      if(octaves != 0, do: "<octave-change>#{octaves}</octave-change>", else: []),
+      "</transpose>\n"
     ]
   end
 

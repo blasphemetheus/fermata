@@ -3,8 +3,13 @@ defmodule Fermata.Generators do
   StreamData generators for random-but-valid scores, used by the
   round-trip property tests. "Valid" means: representable durations
   (no double-dotted 64ths), no `<chord/>` on a measure's first event,
-  and all parts sharing a measure count with 1-based numbering — the
-  invariants real ingested scores will also satisfy.
+  all parts sharing a measure count with 1-based numbering, and
+  same-voice events kept contiguous — the invariants real ingested
+  scores also satisfy.
+
+  Measures are sometimes multi-voice, so the round-trip properties cover
+  `<backup>`/`<voice>` and `{:voice, n}` rather than only the
+  single-voice happy path.
   """
 
   import StreamData
@@ -41,9 +46,27 @@ defmodule Fermata.Generators do
 
   def event, do: frequency([{4, note()}, {1, rest()}])
 
+  @doc """
+  A measure's events: usually one voice, sometimes two or three. Voice
+  groups are emitted contiguously and in ascending order, which is the
+  IR's invariant — a generator that interleaved them would be testing
+  input the rest of the system is entitled to reject.
+  """
   def events do
-    bind(list_of(event(), min_length: 1, max_length: 8), fn events ->
-      constant(strip_leading_chord(events))
+    bind(frequency([{5, constant(1)}, {2, constant(2)}, {1, constant(3)}]), fn voice_count ->
+      1..voice_count
+      |> Enum.map(&voice_events(&1))
+      |> fixed_list()
+      |> bind(fn groups -> constant(List.flatten(groups)) end)
+    end)
+  end
+
+  defp voice_events(voice) do
+    bind(list_of(event(), min_length: 1, max_length: 6), fn events ->
+      events
+      |> strip_leading_chord()
+      |> Enum.map(&%{&1 | voice: voice})
+      |> constant()
     end)
   end
 
