@@ -2,14 +2,16 @@ defmodule Fermata.Model do
   @moduledoc """
   Model construction and the training-numerics policy.
 
-  `build/1` currently assembles a small self-contained residual-MLP
-  language model in plain Axon: token embedding → N pre-norm residual
-  blocks → final norm → LM head. It exists to pin down the *policy*
-  layer — bf16 compute, f32 params, f32 loss — before the real backbone
-  arrives. The production path swaps the block stack for an Edifice
-  backbone once `Edifice.Serving.Generate.build_lm/1` gains a trainable
-  embedding (PLAN.md §5.1 gap #1); the policy code here is
-  backbone-agnostic.
+  `build/1` assembles either a small self-contained residual-MLP
+  language model in plain Axon (`backbone: :builtin`, the default) or any
+  Edifice sequence architecture via `Edifice.Serving.Generate.build_lm/1`
+  (`backbone: :decoder_only`, `:mamba`, ...), which since the trainable
+  embedding fix (PLAN.md §5.1 gap #1, edifice 73704a4) takes integer
+  token IDs and keeps the embedding table inside `Axon.ModelState`.
+  Either way the model maps a `"token_ids"` input `[batch, seq_len]` to
+  `[batch, seq_len, vocab_size]` logits, so training/generation code is
+  backbone-agnostic — as is the policy layer here: bf16 compute, f32
+  params, f32 loss.
 
   Numerics policy (hard-won, see edifice/CLAUDE.md): loss math is ALWAYS
   f32 regardless of network compute precision — `loss/2` casts logits at
@@ -20,29 +22,60 @@ defmodule Fermata.Model do
 
   @doc """
   Build the LM. Options: `:vocab_size` (required), `:seq_len` (required),
-  `:embed_dim` (default 64), `:hidden_dim` (default 128), `:num_layers`
-  (default 2), `:precision` (`:f32` default, or `:bf16`).
+  `:backbone` (`:builtin` default, or an Edifice architecture atom such
+  as `:decoder_only`), `:embed_dim` (default 64), `:hidden_dim` (default
+  128), `:num_layers` (default 2), `:precision` (`:f32` default, or
+  `:bf16`). With an Edifice backbone, all further options are forwarded
+  to `Edifice.build/2` (e.g. `:num_heads`, `:attention_type`).
   """
   def build(opts) do
+    {precision, opts} = Keyword.pop(opts, :precision, :f32)
+    {backbone, opts} = Keyword.pop(opts, :backbone, :builtin)
+
+    model =
+      case backbone do
+        :builtin -> build_builtin(opts)
+        arch -> build_edifice(arch, opts)
+      end
+
+    case precision do
+      :f32 -> model
+      :bf16 -> apply_bf16_policy(model)
+    end
+  end
+
+  defp build_builtin(opts) do
     vocab_size = Keyword.fetch!(opts, :vocab_size)
     seq_len = Keyword.fetch!(opts, :seq_len)
     embed_dim = Keyword.get(opts, :embed_dim, 64)
     hidden_dim = Keyword.get(opts, :hidden_dim, 128)
     num_layers = Keyword.get(opts, :num_layers, 2)
 
-    model =
-      Axon.input("tokens", shape: {nil, seq_len})
-      |> Axon.embedding(vocab_size, embed_dim, name: "token_embedding")
-      |> then(fn x ->
-        Enum.reduce(1..num_layers, x, fn i, acc -> block(acc, embed_dim, hidden_dim, i) end)
-      end)
-      |> Axon.layer_norm(name: "final_norm")
-      |> Axon.dense(vocab_size, name: "lm_head", use_bias: false)
+    Axon.input("token_ids", shape: {nil, seq_len})
+    |> Axon.embedding(vocab_size, embed_dim, name: "token_embedding")
+    |> then(fn x ->
+      Enum.reduce(1..num_layers, x, fn i, acc -> block(acc, embed_dim, hidden_dim, i) end)
+    end)
+    |> Axon.layer_norm(name: "final_norm")
+    |> Axon.dense(vocab_size, name: "lm_head", use_bias: false)
+  end
 
-    case Keyword.get(opts, :precision, :f32) do
-      :f32 -> model
-      :bf16 -> apply_bf16_policy(model)
-    end
+  defp build_edifice(arch, opts) do
+    vocab_size = Keyword.fetch!(opts, :vocab_size)
+    seq_len = Keyword.fetch!(opts, :seq_len)
+    embed_dim = Keyword.get(opts, :embed_dim, 64)
+    hidden_dim = Keyword.get(opts, :hidden_dim, embed_dim)
+
+    opts
+    |> Keyword.drop([:hidden_dim])
+    |> Keyword.merge(
+      arch: arch,
+      vocab_size: vocab_size,
+      seq_len: seq_len,
+      embed_dim: embed_dim,
+      hidden_size: hidden_dim
+    )
+    |> Edifice.Serving.Generate.build_lm()
   end
 
   defp block(x, embed_dim, hidden_dim, i) do

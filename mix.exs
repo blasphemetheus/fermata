@@ -26,6 +26,7 @@ defmodule Fermata.MixProject do
   defp deps do
     [
       {:saxy, "~> 1.6"},
+      {:edifice, path: "../edifice"},
       {:nx, "~> 0.13"},
       {:axon, "~> 0.8"},
       {:polaris, "~> 0.1"},

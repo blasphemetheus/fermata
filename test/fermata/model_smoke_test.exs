@@ -54,7 +54,7 @@ defmodule Fermata.ModelSmokeTest do
           trainable = Axon.ModelState.trainable_parameters(model_state)
 
           Nx.Defn.value_and_grad(trainable, fn tp ->
-            logits = predict_fn.(%{model_state | data: tp}, %{"tokens" => inputs})
+            logits = predict_fn.(%{model_state | data: tp}, %{"token_ids" => inputs})
             Model.loss(targets, logits)
           end)
         end,
