@@ -533,25 +533,64 @@ defmodule Fermata.Kern.Parser do
   end
 
   # Leading rests for a voice that entered the measure late. Greedy
-  # largest-first; every binary duration is a power of two in divisions,
-  # so any offset a tuplet-free file can produce decomposes exactly.
+  # largest-first. A binary offset decomposes exactly into plain rests.
+  # A voice entering at a tuplet offset (a fugue voice arriving
+  # two-thirds of a beat in, say) cannot: for each supported ratio we
+  # instead split the offset into a binary part plus the smallest tuplet
+  # part (k units of the smallest tuplet rest, k < actual) that makes the
+  # binary part whole, then decompose both greedily.
   defp pad_rests(0, _voice), do: []
 
   defp pad_rests(divisions, voice) do
-    {rests, remainder} =
-      Enum.reduce(@pad_units, {[], divisions}, fn {unit, type}, {rests, left} ->
-        count = div(left, unit)
-        {rests ++ List.duplicate(%Rest{duration: {type, 0}, voice: voice}, count),
-         rem(left, unit)}
-      end)
+    case binary_rests(divisions, voice, nil) do
+      {rests, 0} ->
+        rests
 
-    if remainder == 0 do
-      rests
-    else
-      # Only reachable via a duration this parser already rejects; a
-      # visible mis-alignment beats a silent one.
-      raise ArgumentError, "voice offset of #{divisions} divisions is not notatable"
+      _ ->
+        tuplet_pad(divisions, voice) ||
+          raise ArgumentError, "voice offset of #{divisions} divisions is not notatable"
     end
+  end
+
+  defp binary_rests(divisions, voice, tuplet) do
+    Enum.reduce(@pad_units, {[], divisions}, fn {unit, type}, {rests, left} ->
+      scaled =
+        case tuplet do
+          nil -> unit
+          {actual, normal} -> if rem(unit * normal, actual) == 0, do: div(unit * normal, actual)
+        end
+
+      if scaled == nil do
+        {rests, left}
+      else
+        count = div(left, scaled)
+
+        {rests ++
+           List.duplicate(%Rest{duration: {type, 0}, tuplet: tuplet, voice: voice}, count),
+         rem(left, scaled)}
+      end
+    end)
+  end
+
+  defp tuplet_pad(divisions, voice) do
+    {smallest_binary, _type} = List.last(@pad_units)
+
+    Enum.find_value(Duration.tuplet_ratios(), fn {actual, normal} = ratio ->
+      grain = div(smallest_binary * normal, actual)
+
+      Enum.find_value(1..(actual - 1), fn k ->
+        tuplet_part = k * grain
+        binary_part = divisions - tuplet_part
+
+        with true <- binary_part >= 0 and rem(binary_part, smallest_binary) == 0,
+             {binary, 0} <- binary_rests(binary_part, voice, nil),
+             {tuplets, 0} <- binary_rests(tuplet_part, voice, ratio) do
+          binary ++ tuplets
+        else
+          _ -> nil
+        end
+      end)
+    end)
   end
 
   defp build_score(state, refs) do
