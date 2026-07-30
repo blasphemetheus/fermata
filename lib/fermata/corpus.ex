@@ -70,6 +70,18 @@ defmodule Fermata.Corpus do
       glob: "**/*.krn",
       format: :kern,
       note: "Polish heritage 1600-1900, ~8.9K files — largest CC BY kern collection"
+    },
+    openscore_lieder: %{
+      repo: "https://github.com/OpenScore/Lieder",
+      glob: "musicxml/*.musicxml",
+      format: :musicxml,
+      note: "1,352 songs, CC0 — run scripts/convert_mscx.exs after download (mscx -> MusicXML)"
+    },
+    openscore_quartets: %{
+      repo: "https://github.com/OpenScore/StringQuartets",
+      glob: "musicxml/*.musicxml",
+      format: :musicxml,
+      note: "122 quartets, CC0 — run scripts/convert_mscx.exs after download (mscx -> MusicXML)"
     }
   }
 

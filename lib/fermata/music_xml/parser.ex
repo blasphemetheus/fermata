@@ -162,10 +162,19 @@ defmodule Fermata.MusicXML.Parser do
     do: update_measure(state, &%{&1 | key: String.to_integer(text)})
 
   defp end_element("beats", text, state),
-    do: update_measure(state, &%{&1 | time: {String.to_integer(text), elem(&1.time || {0, 4}, 1)}})
+    do: update_measure(state, &%{&1 | time: {strict_int(text, :beats), elem(&1.time || {0, 4}, 1)}})
 
   defp end_element("beat-type", text, state),
-    do: update_measure(state, &%{&1 | time: {elem(&1.time || {4, 0}, 0), String.to_integer(text)}})
+    do: update_measure(state, &%{&1 | time: {elem(&1.time || {4, 0}, 0), strict_int(text, :beat_type)}})
+
+  # MuseScore exports composite meters as e.g. <beats>4(2)</beats>;
+  # nothing in the IR can hold that, so refuse rather than mis-read it.
+  defp strict_int(text, field) do
+    case Integer.parse(text) do
+      {n, ""} -> n
+      _ -> throw({:refuse, {:bad_time, field, text}})
+    end
+  end
 
   defp end_element("sign", text, state) do
     if in_element?(state, "clef") do
@@ -193,8 +202,15 @@ defmodule Fermata.MusicXML.Parser do
     end)
   end
 
+  @steps Map.new(~w(A B C D E F G), &{&1, String.to_atom(&1)})
+  @type_names Map.new(Fermata.Duration.types(), &{to_string(&1), &1})
+
   defp end_element("step", text, %{note: note} = state) when not is_nil(note),
-    do: put_in(state.note[:step], String.to_existing_atom(text))
+    do:
+      put_in(
+        state.note[:step],
+        Map.get(@steps, text) || throw({:refuse, {:bad_step, text}})
+      )
 
   defp end_element("alter", text, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note[:alter], String.to_integer(text))
@@ -216,7 +232,11 @@ defmodule Fermata.MusicXML.Parser do
   end
 
   defp end_element("type", text, %{note: note} = state) when not is_nil(note),
-    do: put_in(state.note[:type], String.to_existing_atom(text))
+    do:
+      put_in(
+        state.note[:type],
+        Map.get(@type_names, text) || throw({:refuse, {:unsupported_type, text}})
+      )
 
   defp end_element("voice", text, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note[:voice], String.to_integer(text))
@@ -234,20 +254,23 @@ defmodule Fermata.MusicXML.Parser do
     do: %{state | note: nil}
 
   defp end_element("note", _text, %{note: note} = state) do
-    event = build_event(note, state.divisions)
-
     dur =
       note[:duration_div] ||
-        throw({:refuse, {:missing_duration_element, describe(event)}})
+        throw({:refuse, {:missing_duration_element, note[:step] || :rest}})
+
+    # A typeless whole-measure rest in an odd meter (4.5 quarters in
+    # 9/8, say) has no single notated value, so build_events may return
+    # several rests; they are recorded as one positioned entry.
+    events = build_events(note, state.divisions)
 
     if note.chord do
       # Chord members sound at the chord's start and do not advance.
-      %{state | note: nil, cur_events: [{state.chord_start, dur, event} | state.cur_events]}
+      %{state | note: nil, cur_events: [{state.chord_start, dur, events} | state.cur_events]}
     else
       %{
         state
         | note: nil,
-          cur_events: [{state.position, dur, event} | state.cur_events],
+          cur_events: [{state.position, dur, events} | state.cur_events],
           chord_start: state.position,
           position: state.position + dur
       }
@@ -273,31 +296,31 @@ defmodule Fermata.MusicXML.Parser do
   # entering mid-measure) becomes explicit rests; an overlap is refused.
   defp regroup_voices(entries, file_divisions) do
     entries
-    |> Enum.map(fn {_pos, _dur, event} -> event.voice end)
+    |> Enum.map(fn {_pos, _dur, [event | _]} -> event.voice end)
     |> Enum.uniq()
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {voice, dense} ->
       entries
-      |> Enum.filter(fn {_pos, _dur, event} -> event.voice == voice end)
+      |> Enum.filter(fn {_pos, _dur, [event | _]} -> event.voice == voice end)
       |> lay_out_voice(dense, file_divisions)
     end)
   end
 
   defp lay_out_voice(entries, dense, file_divisions) do
     {events, _expected} =
-      Enum.reduce(entries, {[], 0}, fn {pos, dur, event}, {acc, expected} ->
-        event = %{event | voice: dense}
+      Enum.reduce(entries, {[], 0}, fn {pos, dur, events}, {acc, expected} ->
+        events = events |> Enum.map(&%{&1 | voice: dense}) |> Enum.reverse()
 
         cond do
-          match?(%Note{chord: true}, event) ->
-            {[event | acc], expected}
+          match?([%Note{chord: true} | _], events) ->
+            {events ++ acc, expected}
 
           pos == expected ->
-            {[event | acc], pos + dur}
+            {events ++ acc, pos + dur}
 
           pos > expected ->
             pad = gap_rests(pos - expected, file_divisions, dense)
-            {[event | Enum.reverse(pad, acc)], pos + dur}
+            {events ++ Enum.reverse(pad, acc), pos + dur}
 
           true ->
             throw({:refuse, {:overlapping_voice, dense}})
@@ -320,29 +343,41 @@ defmodule Fermata.MusicXML.Parser do
     end
   end
 
-  defp describe(%Note{step: step, octave: octave}), do: "note #{step}#{octave}"
-  defp describe(%Rest{}), do: "rest"
-
   # ── Builders ────────────────────────────────────────────────────────
 
-  defp build_event(%{rest: true} = note, divisions),
-    do: %Rest{
-      duration: duration_of(note, divisions),
-      voice: note.voice,
-      tuplet: tuplet_of(note)
-    }
+  # A rest with a written <type> is one rest. Without one (typeless
+  # whole-measure rests) its sounding length may need several written
+  # values — 4.5 quarters in 9/8 is a whole plus an eighth.
+  defp build_events(%{rest: true, type: _} = note, divisions) do
+    [%Rest{duration: duration_of(note, divisions), voice: note.voice, tuplet: tuplet_of(note)}]
+  end
 
-  defp build_event(note, divisions) do
-    %Note{
-      step: Map.fetch!(note, :step),
-      alter: note.alter,
-      octave: Map.fetch!(note, :octave),
-      duration: duration_of(note, divisions),
-      chord: note.chord,
-      tie: resolve_ties(note.ties),
-      voice: note.voice,
-      tuplet: tuplet_of(note)
-    }
+  defp build_events(%{rest: true} = note, divisions) do
+    ours = note.duration_div * Duration.divisions()
+
+    with 0 <- rem(ours, divisions),
+         {:ok, rests} <- Duration.decompose_rests(div(ours, divisions)) do
+      for {duration, tuplet} <- rests do
+        %Rest{duration: duration, voice: note.voice, tuplet: tuplet}
+      end
+    else
+      _ -> throw({:refuse, {:unrepresentable_rest, note.duration_div}})
+    end
+  end
+
+  defp build_events(note, divisions) do
+    [
+      %Note{
+        step: Map.fetch!(note, :step),
+        alter: note.alter,
+        octave: Map.fetch!(note, :octave),
+        duration: duration_of(note, divisions),
+        chord: note.chord,
+        tie: resolve_ties(note.ties),
+        voice: note.voice,
+        tuplet: tuplet_of(note)
+      }
+    ]
   end
 
   defp tuplet_of(%{actual: actual, normal: normal})
@@ -357,8 +392,16 @@ defmodule Fermata.MusicXML.Parser do
 
   defp duration_of(%{duration_div: div_count}, divisions) do
     # No <type>: fall back to the sounding length, scaled from the file's
-    # divisions to ours. Only correct for plain durations.
-    Duration.from_divisions!(div(div_count * Duration.divisions(), divisions))
+    # divisions to ours. Only correct for plain durations; a note (unlike
+    # a rest) cannot be split, so no single match is a refusal.
+    ours = div_count * Duration.divisions()
+
+    with 0 <- rem(ours, divisions),
+         {type, dots} <- Duration.from_divisions(div(ours, divisions)) do
+      {type, dots}
+    else
+      _ -> throw({:refuse, {:unnotatable_duration, div_count}})
+    end
   end
 
   defp resolve_ties([]), do: nil
@@ -372,6 +415,8 @@ defmodule Fermata.MusicXML.Parser do
   defp normalize_clef({"F", 4, 0}), do: :bass
   defp normalize_clef({"C", 3, 0}), do: :alto
   defp normalize_clef({"C", 4, 0}), do: :tenor
+  # French violin clef, percussion, tablature... — not in the IR.
+  defp normalize_clef(other), do: throw({:refuse, {:unsupported_clef, other}})
 
   defp update_measure(%{cur_measure: %Measure{} = m} = state, fun),
     do: %{state | cur_measure: fun.(m)}

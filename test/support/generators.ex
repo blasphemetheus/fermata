@@ -34,11 +34,19 @@ defmodule Fermata.Generators do
     ])
   end
 
+  # Duration + ratio pairs the divisions can express exactly — the same
+  # `Duration.exact?/2` gate both parsers apply before accepting input.
+  defp representable({duration, tuplet}) do
+    if Duration.exact?(duration, tuplet), do: {duration, tuplet}, else: {duration, nil}
+  end
+
   def note do
     bind(
       {member_of(Note.steps()), integer(-2..2), integer(0..8), duration(),
        member_of([nil, nil, nil, :start, :stop, :both]), boolean(), tuplet()},
       fn {step, alter, octave, dur, tie, chord, tuplet} ->
+        {dur, tuplet} = representable({dur, tuplet})
+
         constant(%Note{
           step: step,
           alter: alter,
@@ -54,6 +62,7 @@ defmodule Fermata.Generators do
 
   def rest do
     bind({duration(), tuplet()}, fn {dur, tuplet} ->
+      {dur, tuplet} = representable({dur, tuplet})
       constant(%Rest{duration: dur, tuplet: tuplet})
     end)
   end

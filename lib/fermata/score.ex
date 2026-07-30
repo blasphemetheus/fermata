@@ -170,10 +170,31 @@ defmodule Fermata.Duration do
 
   # Tuplet counts we can represent exactly. The conventional partner for
   # each is the largest power of two below it: 3:2, 5:4, ..., 15:8.
-  # Append-only: Fermata.Vocab freezes the token ids of the first four
-  # and appends the rest at the vocab's end.
   @tuplet_actuals [3, 5, 7, 9, 11, 13, 15]
-  @tuplet_ratios [{3, 2}, {5, 4}, {7, 4}, {9, 8}, {11, 8}, {13, 8}, {15, 8}]
+  @canonical_ratios [{3, 2}, {5, 4}, {7, 4}, {9, 8}, {11, 8}, {13, 8}, {15, 8}]
+
+  # Real-world MusicXML also writes non-canonical ratios: sextuplets as
+  # 6:4, duplets in compound meter as 2:3 (or MuseScore's 2:1),
+  # quadruplets as 4:3, and odder ones. All scale exactly under our
+  # divisions, and the written ratio is notation (a sextuplet bracket
+  # reads 6, not 3), so they are kept verbatim rather than normalized.
+  # Append-only: Fermata.Vocab freezes earlier ratios' token ids by
+  # value; anything added here lands at the vocab's end.
+  @extended_ratios [{2, 1}, {2, 3}, {4, 3}, {4, 6}, {5, 2}, {5, 3}, {6, 4}, {7, 1}, {7, 8}]
+  # Second sweep of the OpenScore Lieder tail; same reasoning.
+  @extended_ratios_2 [
+    {7, 6},
+    {8, 2},
+    {9, 4},
+    {10, 4},
+    {10, 8},
+    {11, 12},
+    {12, 8},
+    {16, 8},
+    {22, 16},
+    {35, 16}
+  ]
+  @tuplet_ratios @canonical_ratios ++ @extended_ratios ++ @extended_ratios_2
 
   @tuplet_lcm Enum.reduce(@tuplet_actuals, 1, fn a, acc -> div(acc * a, Integer.gcd(acc, a)) end)
   @divisions 256 * @tuplet_lcm
@@ -193,11 +214,12 @@ defmodule Fermata.Duration do
     "128th": div(@divisions, 32)
   }
 
-  @max_dots 3
+  # MuseScore permits four dots; they appear in real corpora.
+  @max_dots 4
 
   @type type ::
           :breve | :whole | :half | :quarter | :eighth | :"16th" | :"32nd" | :"64th" | :"128th"
-  @type t :: {type(), 0..3}
+  @type t :: {type(), 0..4}
   @type tuplet :: {pos_integer(), pos_integer()} | nil
 
   def types, do: @types
@@ -330,7 +352,10 @@ defmodule Fermata.Duration do
   end
 
   defp tuplet_span(divisions) do
-    Enum.find_value(@tuplet_ratios, :error, fn {actual, normal} = ratio ->
+    # Padding only uses the canonical ratios: the extended ones either
+    # scale by powers of two (2:1 padding is just plain rests) or are
+    # notational variants a reader would find bizarre in padding.
+    Enum.find_value(@canonical_ratios, :error, fn {actual, normal} = ratio ->
       grain = div(@smallest * normal, actual)
 
       Enum.find_value(1..(actual - 1), fn k ->

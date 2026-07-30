@@ -51,5 +51,14 @@ defmodule Fermata.VocabTest do
     # duration types added later (all dot counts) append after that
     assert t2i[{:dur, :"128th", 0}] == 616
     assert t2i[{:dur, :"128th", 3}] == 619
+    # then the extended (non-canonical) tuplet ratios, in Duration order
+    assert t2i[{:tuplet, 2, 1}] == 620
+    assert t2i[{:tuplet, 7, 8}] == 628
+    # then quadruple dots for all types known at that point
+    assert t2i[{:dur, :breve, 4}] == 629
+    assert t2i[{:dur, :"128th", 4}] == 637
+    # second extended-ratio sweep lands at the global end
+    assert t2i[{:tuplet, 7, 6}] == 638
+    assert t2i[{:tuplet, 35, 16}] == 647
   end
 end
