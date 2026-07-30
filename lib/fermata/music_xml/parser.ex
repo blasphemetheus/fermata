@@ -97,7 +97,19 @@ defmodule Fermata.MusicXML.Parser do
   end
 
   defp start_element("note", _attrs, state),
-    do: %{state | note: %{dots: 0, ties: [], chord: false, rest: false, alter: 0, voice: 1}}
+    do: %{
+      state
+      | note: %{
+          dots: 0,
+          ties: [],
+          chord: false,
+          rest: false,
+          alter: 0,
+          voice: 1,
+          actual: nil,
+          normal: nil
+        }
+    }
 
   defp start_element("chord", _attrs, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note.chord, true)
@@ -187,6 +199,15 @@ defmodule Fermata.MusicXML.Parser do
   defp end_element("voice", text, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note[:voice], String.to_integer(text))
 
+  # <time-modification> carries the tuplet ratio. The <tuplet> bracket in
+  # <notations> is ignored: it is presentation, and the writer recomputes
+  # group extents from the ratios themselves.
+  defp end_element("actual-notes", text, %{note: note} = state) when not is_nil(note),
+    do: put_in(state.note[:actual], String.to_integer(text))
+
+  defp end_element("normal-notes", text, %{note: note} = state) when not is_nil(note),
+    do: put_in(state.note[:normal], String.to_integer(text))
+
   defp end_element("note", _text, %{note: note} = state) do
     event = build_event(note, state.divisions)
     %{state | note: nil, cur_events: [event | state.cur_events]}
@@ -204,7 +225,11 @@ defmodule Fermata.MusicXML.Parser do
   # ── Builders ────────────────────────────────────────────────────────
 
   defp build_event(%{rest: true} = note, divisions),
-    do: %Rest{duration: duration_of(note, divisions), voice: note.voice}
+    do: %Rest{
+      duration: duration_of(note, divisions),
+      voice: note.voice,
+      tuplet: tuplet_of(note)
+    }
 
   defp build_event(note, divisions) do
     %Note{
@@ -214,15 +239,25 @@ defmodule Fermata.MusicXML.Parser do
       duration: duration_of(note, divisions),
       chord: note.chord,
       tie: resolve_ties(note.ties),
-      voice: note.voice
+      voice: note.voice,
+      tuplet: tuplet_of(note)
     }
   end
 
+  defp tuplet_of(%{actual: actual, normal: normal})
+       when is_integer(actual) and is_integer(normal),
+       do: {actual, normal}
+
+  defp tuplet_of(_note), do: nil
+
+  # <type> is the written value, which is what the IR stores, so a tuplet
+  # note needs no unscaling here — the ratio is kept separately.
   defp duration_of(%{type: type, dots: dots}, _divisions), do: {type, dots}
 
   defp duration_of(%{duration_div: div_count}, divisions) do
-    # Scale from the file's divisions to ours, then invert.
-    Duration.from_divisions(div(div_count * Duration.divisions(), divisions))
+    # No <type>: fall back to the sounding length, scaled from the file's
+    # divisions to ours. Only correct for plain durations.
+    Duration.from_divisions!(div(div_count * Duration.divisions(), divisions))
   end
 
   defp resolve_ties([]), do: nil

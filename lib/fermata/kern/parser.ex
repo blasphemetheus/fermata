@@ -310,7 +310,7 @@ defmodule Fermata.Kern.Parser do
     advance =
       events
       |> Enum.reject(&match?(%Note{chord: true}, &1))
-      |> Enum.map(&Duration.divisions_for(&1.duration))
+      |> Enum.map(&Duration.divisions_for(&1.duration, &1.tuplet))
       |> Enum.sum()
 
     state
@@ -343,9 +343,9 @@ defmodule Fermata.Kern.Parser do
     do: String.contains?(note_text, "q") or String.contains?(note_text, "Q")
 
   defp parse_note(text, chord?) do
-    with {:ok, duration} <- extract_duration(text) do
+    with {:ok, duration, tuplet} <- extract_duration(text) do
       if String.contains?(text, "r") do
-        {:ok, %Rest{duration: duration}}
+        {:ok, %Rest{duration: duration, tuplet: tuplet}}
       else
         with {:ok, step, octave} <- extract_pitch(text) do
           {:ok,
@@ -355,26 +355,77 @@ defmodule Fermata.Kern.Parser do
              alter: extract_alter(text),
              duration: duration,
              tie: extract_tie(text),
-             chord: chord?
+             chord: chord?,
+             tuplet: tuplet
            }}
         end
       end
     end
   end
 
+  # Returns {:ok, {type, dots}, tuplet}.
   defp extract_duration(text) do
     case Regex.run(~r/(\d+)(\.*)/, text) do
       [_, recip, dots] ->
-        recip = String.to_integer(recip)
+        recip_value = String.to_integer(recip)
 
-        case Map.fetch(@recip_types, recip) do
-          {:ok, type} -> {:ok, {type, String.length(dots)}}
-          :error -> {:error, {:unsupported_duration, recip}}
+        with {:ok, base, tuplet} <- decompose_recip(recip_value),
+             {:ok, type} <- Map.fetch(@recip_types, base),
+             duration = {type, String.length(dots)},
+             # Reject anything the fixed divisions would have to round —
+             # a triple-dotted 64th, say — rather than let the arithmetic
+             # raise somewhere further down.
+             true <- Duration.exact?(duration, tuplet) do
+          {:ok, duration, tuplet}
+        else
+          :error -> {:error, {:unsupported_duration, recip_value}}
+          false -> {:error, {:unrepresentable_duration, recip <> dots}}
+          {:error, reason} -> {:error, reason}
         end
 
       nil ->
         {:error, {:missing_duration, text}}
     end
+  end
+
+  # A kern recip is the reciprocal of a whole note: 4 is a quarter, 8 an
+  # eighth. Tuplets fall out of that arithmetic rather than needing a
+  # table — factor out the powers of two and whatever odd part remains is
+  # the tuplet's actual-count:
+  #
+  #   12 = 4 x 3  -> base 8 (eighth), 3 in the time of 2   (triplet eighth)
+  #   40 = 8 x 5  -> base 32,         5 in the time of 4   (quintuplet 32nd)
+  #  112 = 16 x 7 -> base 64,         7 in the time of 4   (septuplet 64th)
+  #
+  # The base is 2^k x normal, so it is always a power of two and lands in
+  # @recip_types.
+  defp decompose_recip(0), do: {:ok, 0, nil}
+
+  defp decompose_recip(recip) do
+    odd = odd_part(recip)
+
+    cond do
+      odd == 1 ->
+        {:ok, recip, nil}
+
+      odd in Duration.tuplet_actuals() ->
+        normal = normal_for(odd)
+        {:ok, div(recip * normal, odd), {odd, normal}}
+
+      true ->
+        {:error, {:unsupported_tuplet, odd}}
+    end
+  end
+
+  defp odd_part(n) when rem(n, 2) == 0, do: odd_part(div(n, 2))
+  defp odd_part(n), do: n
+
+  # The conventional partner of a tuplet count is the largest power of two
+  # below it: 3:2, 5:4, 7:4, 9:8.
+  defp normal_for(actual) do
+    Stream.iterate(1, &(&1 * 2))
+    |> Enum.take_while(&(&1 < actual))
+    |> List.last()
   end
 
   @steps %{"A" => :A, "B" => :B, "C" => :C, "D" => :D, "E" => :E, "F" => :F, "G" => :G}

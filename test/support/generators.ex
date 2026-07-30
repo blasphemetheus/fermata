@@ -18,30 +18,44 @@ defmodule Fermata.Generators do
 
   def duration do
     bind(member_of(Duration.types()), fn type ->
-      max_dots = if type == :"64th", do: 1, else: 2
-      bind(integer(0..max_dots), fn dots -> constant({type, dots}) end)
+      bind(integer(0..2), fn dots -> constant({type, dots}) end)
     end)
+  end
+
+  @doc """
+  A tuplet ratio, or `nil` most of the time. Mixing tuplet and plain
+  events freely is intentional: the writer has to recover group extents
+  from the ratios, so the properties should hand it ragged input.
+  """
+  def tuplet do
+    frequency([
+      {6, constant(nil)},
+      {1, member_of(Duration.tuplet_ratios())}
+    ])
   end
 
   def note do
     bind(
       {member_of(Note.steps()), integer(-2..2), integer(0..8), duration(),
-       member_of([nil, nil, nil, :start, :stop, :both]), boolean()},
-      fn {step, alter, octave, dur, tie, chord} ->
+       member_of([nil, nil, nil, :start, :stop, :both]), boolean(), tuplet()},
+      fn {step, alter, octave, dur, tie, chord, tuplet} ->
         constant(%Note{
           step: step,
           alter: alter,
           octave: octave,
           duration: dur,
           tie: tie,
-          chord: chord
+          chord: chord,
+          tuplet: tuplet
         })
       end
     )
   end
 
   def rest do
-    bind(duration(), fn dur -> constant(%Rest{duration: dur}) end)
+    bind({duration(), tuplet()}, fn {dur, tuplet} ->
+      constant(%Rest{duration: dur, tuplet: tuplet})
+    end)
   end
 
   def event, do: frequency([{4, note()}, {1, rest()}])

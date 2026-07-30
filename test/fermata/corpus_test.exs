@@ -26,9 +26,10 @@ defmodule Fermata.CorpusTest do
 
   test "ingest_files records parse failures with typed reasons", %{dir: dir} do
     bad = Path.join(System.tmp_dir!(), "bad_#{System.unique_integer([:positive])}.krn")
-    # A tuplet duration — still unsupported, unlike the *^ split this
-    # fixture used before spine splits were implemented.
-    File.write!(bad, "**kern\n12c\n*-\n")
+    # An 11-tuplet: past the ratios the fixed divisions can express, so
+    # still refused. (A plain triplet parses now, as does the *^ split
+    # this fixture used before either was implemented.)
+    File.write!(bad, "**kern\n11c\n*-\n")
     on_exit(fn -> File.rm!(bad) end)
 
     {:ok, index} = Corpus.ingest_files([@chorale, bad], dir, :kern)

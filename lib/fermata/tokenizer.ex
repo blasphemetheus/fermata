@@ -20,8 +20,11 @@ defmodule Fermata.Tokenizer do
   where `[attrs]` are `{:key, _}` / `{:time, _, _}` / `{:clef, _}` tokens,
   present iff set on that `Fermata.Measure`, and an event is:
 
-      [:chord]? {:pitch, s, a, o} {:dur, t, d} [:tie_start | :tie_stop]*
-      :rest {:dur, t, d}
+      [:chord]? {:pitch, s, a, o} {:dur, t, d} [{:tuplet, a, n}]? [:tie_start | :tie_stop]*
+      :rest {:dur, t, d} [{:tuplet, a, n}]?
+
+  A `{:tuplet, actual, normal}` token modifies the duration immediately
+  before it, so plain music is unaffected.
 
   Multi-voice measures (divisi, keyboard hands) emit a `{:voice, n}`
   marker before each voice group after the first; voice 1 is implicit, so
@@ -98,12 +101,16 @@ defmodule Fermata.Tokenizer do
         :both -> [:tie_stop, :tie_start]
       end
 
-    chord ++ [{:pitch, n.step, n.alter, n.octave}, {:dur, type, dots}] ++ ties
+    chord ++
+      [{:pitch, n.step, n.alter, n.octave}, {:dur, type, dots}] ++ tuplet(n.tuplet) ++ ties
   end
 
-  defp encode_event(%Rest{duration: {type, dots}}) do
-    [:rest, {:dur, type, dots}]
+  defp encode_event(%Rest{duration: {type, dots}} = r) do
+    [:rest, {:dur, type, dots}] ++ tuplet(r.tuplet)
   end
+
+  defp tuplet(nil), do: []
+  defp tuplet({actual, normal}), do: [{:tuplet, actual, normal}]
 
   def encode_ids(%Score{} = score) do
     mapping = Vocab.token_to_id()
@@ -168,6 +175,7 @@ defmodule Fermata.Tokenizer do
         :chord -> add_event(m, {:pending_chord})
         {:pitch, s, a, o} -> add_pitch(m, s, a, o, voice)
         {:dur, type, dots} -> set_duration(m, {type, dots}, voice)
+        {:tuplet, actual, normal} -> set_tuplet(m, {actual, normal})
         :tie_start -> update_tie(m, :start)
         :tie_stop -> update_tie(m, :stop)
         :rest -> add_event(m, {:pending_rest})
@@ -197,6 +205,10 @@ defmodule Fermata.Tokenizer do
   defp set_duration(%Measure{events: [%Note{duration: :pending} = n | events]} = m, dur, _voice) do
     %{m | events: [%{n | duration: dur} | events]}
   end
+
+  # Applies to whichever event's duration was just set.
+  defp set_tuplet(%Measure{events: [event | events]} = m, ratio),
+    do: %{m | events: [%{event | tuplet: ratio} | events]}
 
   defp update_tie(%Measure{events: [%Note{} = n | events]} = m, side) do
     tie =

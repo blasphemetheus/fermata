@@ -97,7 +97,7 @@ defmodule Fermata.MusicXML.Writer do
 
       iodata = [
         if(rewind, do: "<backup><duration>#{rewind}</duration></backup>\n", else: []),
-        Enum.map(events, &event(&1, label))
+        events |> mark_tuplets() |> Enum.map(fn {e, bracket} -> event(e, label, bracket) end)
       ]
 
       {iodata, group_divisions(events)}
@@ -109,8 +109,72 @@ defmodule Fermata.MusicXML.Writer do
   defp group_divisions(events) do
     events
     |> Enum.reject(&match?(%Note{chord: true}, &1))
-    |> Enum.map(&Duration.divisions_for(&1.duration))
+    |> Enum.map(&Duration.divisions_for(&1.duration, &1.tuplet))
     |> Enum.sum()
+  end
+
+  # Pair each event with its tuplet bracket marker (nil, :start, :stop, or
+  # :both for a one-event group).
+  #
+  # A tuplet's extent is not stored in the IR — only the ratio per note —
+  # so groups are recovered here: accumulate consecutive same-ratio events
+  # and close the group as soon as their sounding total is itself a plain
+  # written value. That is exactly when a tuplet is complete (three
+  # triplet eighths sound as one quarter), and it splits a run of six into
+  # two groups of three instead of drawing one bracket over all six.
+  defp mark_tuplets(events) do
+    events
+    |> chunk_tuplets([], [])
+    |> Enum.flat_map(fn
+      {:plain, event} -> [{event, nil}]
+      {:group, group} -> mark_group(group)
+    end)
+  end
+
+  # Walk the events, splitting them into plain events and tuplet groups.
+  # `run` accumulates the group under construction, newest first.
+  defp chunk_tuplets([], run, acc), do: acc |> flush(run) |> Enum.reverse()
+
+  defp chunk_tuplets([event | rest], run, acc) do
+    cond do
+      is_nil(event.tuplet) ->
+        chunk_tuplets(rest, [], [{:plain, event} | flush(acc, run)])
+
+      run == [] or hd(run).tuplet == event.tuplet ->
+        take(rest, [event | run], acc)
+
+      # A change of ratio ends the previous group and opens a new one.
+      true ->
+        take(rest, [event], flush(acc, run))
+    end
+  end
+
+  defp take(rest, run, acc) do
+    if complete?(run) do
+      chunk_tuplets(rest, [], flush(acc, run))
+    else
+      chunk_tuplets(rest, run, acc)
+    end
+  end
+
+  defp flush(acc, []), do: acc
+  defp flush(acc, run), do: [{:group, Enum.reverse(run)} | acc]
+
+  defp complete?(run) do
+    sounding =
+      run
+      |> Enum.reject(&match?(%Note{chord: true}, &1))
+      |> Enum.map(&Duration.divisions_for(&1.duration, &1.tuplet))
+      |> Enum.sum()
+
+    sounding > 0 and Duration.from_divisions(sounding) != nil
+  end
+
+  defp mark_group([only]), do: [{only, :both}]
+
+  defp mark_group([first | rest]) do
+    {middle, [last]} = Enum.split(rest, length(rest) - 1)
+    [{first, :start}] ++ Enum.map(middle, &{&1, nil}) ++ [{last, :stop}]
   end
 
   defp attributes(%Measure{key: nil, time: nil, clef: nil}, nil), do: []
@@ -162,37 +226,52 @@ defmodule Fermata.MusicXML.Writer do
   defp clef(:treble_8vb),
     do: "<clef><sign>G</sign><line>2</line><clef-octave-change>-1</clef-octave-change></clef>\n"
 
-  # <voice> sits after <tie> and before <type> in the DTD content model.
-  defp event(%Note{duration: {type, dots} = dur} = n, voice) do
+  # Element order follows the DTD content model: duration, tie, voice,
+  # type, dot, time-modification, notations.
+  defp event(%Note{duration: {type, dots} = dur} = n, voice, bracket) do
     [
       "<note>",
       if(n.chord, do: "<chord/>", else: []),
       "<pitch><step>#{n.step}</step>",
       if(n.alter != 0, do: "<alter>#{n.alter}</alter>", else: []),
       "<octave>#{n.octave}</octave></pitch>",
-      "<duration>#{Duration.divisions_for(dur)}</duration>",
+      "<duration>#{Duration.divisions_for(dur, n.tuplet)}</duration>",
       tie_elements(n.tie),
       voice_element(voice),
       "<type>#{type}</type>",
       List.duplicate("<dot/>", dots),
-      tie_notations(n.tie),
+      time_modification(n.tuplet),
+      notations(n.tie, bracket),
       "</note>\n"
     ]
   end
 
-  defp event(%Rest{duration: {type, dots} = dur}, voice) do
+  defp event(%Rest{duration: {type, dots} = dur} = r, voice, bracket) do
     [
       "<note><rest/>",
-      "<duration>#{Duration.divisions_for(dur)}</duration>",
+      "<duration>#{Duration.divisions_for(dur, r.tuplet)}</duration>",
       voice_element(voice),
       "<type>#{type}</type>",
       List.duplicate("<dot/>", dots),
+      time_modification(r.tuplet),
+      notations(nil, bracket),
       "</note>\n"
     ]
   end
 
   defp voice_element(nil), do: []
   defp voice_element(voice), do: "<voice>#{voice}</voice>"
+
+  # <time-modification> carries the arithmetic (how long the note really
+  # lasts); the <tuplet> bracket in <notations> is the visual marking.
+  # Renderers need the first for playback and the second to draw the
+  # bracket and its number, so a tuplet wants both.
+  defp time_modification(nil), do: []
+
+  defp time_modification({actual, normal}) do
+    "<time-modification><actual-notes>#{actual}</actual-notes>" <>
+      "<normal-notes>#{normal}</normal-notes></time-modification>"
+  end
 
   # <tie> is the sounding tie (ordered before <type> in the DTD);
   # <notations><tied> is the engraved arc (ordered after <dot/>).
@@ -202,12 +281,22 @@ defmodule Fermata.MusicXML.Writer do
   defp tie_elements(:stop), do: ~s(<tie type="stop"/>)
   defp tie_elements(:both), do: ~s(<tie type="stop"/><tie type="start"/>)
 
-  defp tie_notations(nil), do: []
-  defp tie_notations(:start), do: ~s(<notations><tied type="start"/></notations>)
-  defp tie_notations(:stop), do: ~s(<notations><tied type="stop"/></notations>)
+  # Ties and tuplet brackets are both <notations> children, so they share
+  # one element rather than emitting two sibling <notations> blocks.
+  defp notations(nil, nil), do: []
 
-  defp tie_notations(:both),
-    do: ~s(<notations><tied type="stop"/><tied type="start"/></notations>)
+  defp notations(tie, bracket),
+    do: ["<notations>", tied(tie), tuplet_bracket(bracket), "</notations>"]
+
+  defp tied(nil), do: []
+  defp tied(:start), do: ~s(<tied type="start"/>)
+  defp tied(:stop), do: ~s(<tied type="stop"/>)
+  defp tied(:both), do: ~s(<tied type="stop"/><tied type="start"/>)
+
+  defp tuplet_bracket(nil), do: []
+  defp tuplet_bracket(:start), do: ~s(<tuplet type="start"/>)
+  defp tuplet_bracket(:stop), do: ~s(<tuplet type="stop"/>)
+  defp tuplet_bracket(:both), do: ~s(<tuplet type="start"/><tuplet type="stop"/>)
 
   defp escape(text) do
     text

@@ -192,13 +192,71 @@ defmodule Fermata.Kern.ParserTest do
     end
   end
 
-  test "rejects tuplet durations rather than mis-parsing" do
+  test "decodes tuplets from the recip value" do
+    # 12 = 4 x 3 -> an eighth, three in the time of two.
+    # 24 -> triplet 16th, 6 -> triplet quarter, 40 -> quintuplet 32nd,
+    # 112 -> septuplet 64th, 72 -> nonuplet 64th.
     kern = """
     **kern
     12c
+    24d
+    6e
+    40f
+    112g
+    72a
     *-
     """
 
-    assert {:error, {:unsupported_duration, 12}} = Kern.Parser.parse(kern)
+    assert {:ok, score} = Kern.Parser.parse(kern)
+    events = hd(hd(score.parts).measures).events
+
+    assert [
+             %Note{duration: {:eighth, 0}, tuplet: {3, 2}},
+             %Note{duration: {:"16th", 0}, tuplet: {3, 2}},
+             %Note{duration: {:quarter, 0}, tuplet: {3, 2}},
+             %Note{duration: {:"32nd", 0}, tuplet: {5, 4}},
+             %Note{duration: {:"64th", 0}, tuplet: {7, 4}},
+             %Note{duration: {:"64th", 0}, tuplet: {9, 8}}
+           ] = events
+  end
+
+  test "a dotted tuplet keeps both the dot and the ratio" do
+    kern = """
+    **kern
+    12.c
+    *-
+    """
+
+    assert {:ok, score} = Kern.Parser.parse(kern)
+    assert [%Note{duration: {:eighth, 1}, tuplet: {3, 2}}] = hd(hd(score.parts).measures).events
+  end
+
+  test "tuplets survive the tokenizer round-trip" do
+    kern = """
+    **kern
+    =1
+    12c
+    12d
+    12e
+    4f
+    *-
+    """
+
+    assert {:ok, score} = Kern.Parser.parse(kern)
+    round_tripped = score |> Tokenizer.encode_ids() |> Tokenizer.decode_ids()
+
+    assert %{round_tripped | title: score.title, composer: score.composer} == score
+  end
+
+  test "rejects tuplet ratios the divisions cannot express" do
+    # 11-tuplets need a divisions constant 11x larger; refuse rather than
+    # round the durations.
+    kern = """
+    **kern
+    11c
+    *-
+    """
+
+    assert {:error, {:unsupported_tuplet, 11}} = Kern.Parser.parse(kern)
   end
 end

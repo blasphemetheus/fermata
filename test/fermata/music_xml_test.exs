@@ -2,8 +2,8 @@ defmodule Fermata.MusicXMLTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias Fermata.{Fixtures.Chorale, Generators, Instruments, Measure, MusicXML, Note, Part, Rest,
-                 Score, Transpose}
+  alias Fermata.{Duration, Fixtures.Chorale, Generators, Instruments, Measure, MusicXML, Note,
+                 Part, Rest, Score, Transpose}
 
   defp note(step, octave, voice, dur \\ {:quarter, 0}),
     do: %Note{step: step, octave: octave, duration: dur, voice: voice}
@@ -65,8 +65,8 @@ defmodule Fermata.MusicXMLTest do
 
       assert xml =~ "<voice>1</voice>"
       assert xml =~ "<voice>2</voice>"
-      # Two quarters at 32 divisions each
-      assert xml =~ "<backup><duration>64</duration></backup>"
+      # The rewind is voice 1's two quarter notes
+      assert xml =~ "<backup><duration>#{2 * Duration.divisions()}</duration></backup>"
     end
   end
 

@@ -20,6 +20,7 @@ defmodule Fermata.Vocab do
     * `{:dur, type, dots}`
     * `:chord`, `:tie_start`, `:tie_stop`, `:rest`
     * `{:voice, 1..8}` — "the following events are voice N of this part"
+    * `{:tuplet, actual, normal}` — modifies the duration just emitted
 
   Appended after the Phase 0 block (ids 0..526 are frozen: corpus shards
   on disk hold those ids). Appending is safe; reordering is not.
@@ -59,6 +60,8 @@ defmodule Fermata.Vocab do
           alter <- @alters,
           do: {:pitch, step, alter, octave}
 
+    # Frozen at 0..2 dots; triple dots are appended below, not inserted
+    # here, since this list sits inside the frozen id block.
     durations = for type <- Duration.types(), dots <- 0..2, do: {:dur, type, dots}
 
     phase_0 = specials ++ keys ++ times ++ clefs ++ instruments ++ parts ++ pitches ++ durations
@@ -66,8 +69,10 @@ defmodule Fermata.Vocab do
     # APPEND-ONLY past this point — see @moduledoc.
     voices = for v <- 1..@max_voices, do: {:voice, v}
     later_instruments = for i <- Instruments.added(), do: {:instrument, i}
+    tuplets = for {actual, normal} <- Duration.tuplet_ratios(), do: {:tuplet, actual, normal}
+    triple_dots = for type <- Duration.types(), do: {:dur, type, 3}
 
-    phase_0 ++ voices ++ later_instruments
+    phase_0 ++ voices ++ later_instruments ++ tuplets ++ triple_dots
   end
 
   @doc "Map of token → integer id."
