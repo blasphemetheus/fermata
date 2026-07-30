@@ -64,6 +64,12 @@ defmodule Fermata.Corpus do
       glob: "kern/*.krn",
       format: :kern,
       note: "82 quartet movements — Phase 2 core"
+    },
+    polish_scores: %{
+      repo: "https://github.com/pl-wnifc/humdrum-polish-scores",
+      glob: "**/*.krn",
+      format: :kern,
+      note: "Polish heritage 1600-1900, ~8.9K files — largest CC BY kern collection"
     }
   }
 
