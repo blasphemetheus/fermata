@@ -218,6 +218,58 @@ defmodule Fermata.TransposeTest do
         end
       end
     end
+
+    test "an instrument named 'in X' sounds X when its player reads C" do
+      # The one check that catches a mistyped interval: a B♭ instrument
+      # must sound some flavour of B♭ from a written C, whatever octave.
+      keyed = %{
+        "B♭" => {:B, -1},
+        "A♭" => {:A, -1},
+        "E♭" => {:E, -1},
+        "A" => {:A, 0},
+        "C" => {:C, 0},
+        "D" => {:D, 0},
+        "E" => {:E, 0},
+        "F" => {:F, 0},
+        "G" => {:G, 0}
+      }
+
+      for id <- Instruments.all(),
+          # /u or the character class splits ♭ mid-codepoint
+          [_, key] = Regex.run(~r/ in ([A-G][♭♯]?)/u, Instruments.display_name(id)) ||
+                       [nil, nil],
+          not is_nil(key) do
+        {expected_step, expected_alter} = Map.fetch!(keyed, key)
+
+        {step, alter, _octave} =
+          case Instruments.transposition(id) do
+            nil -> {:C, 0, 4}
+            interval -> Pitch.transpose(:C, 0, 4, interval)
+          end
+
+        assert {step, alter} == {expected_step, expected_alter},
+               "#{id} is named \"in #{key}\" but written C sounds #{step}/#{alter}"
+      end
+    end
+
+    test "no display name resolves to a different instrument" do
+      # With ~100 entries and generous aliases, a collision would silently
+      # make one instrument unreachable by its own name.
+      for id <- Instruments.all() do
+        assert Instruments.find(Instruments.display_name(id)) == {:ok, id}
+      end
+    end
+
+    test "every alias resolves to exactly one instrument" do
+      claims =
+        for id <- Instruments.all(), name <- [Instruments.display_name(id) | Instruments.aliases(id)] do
+          {Instruments.find(name), id}
+        end
+
+      shadowed = for {{:ok, resolved}, id} <- claims, resolved != id, do: {id, resolved}
+
+      assert shadowed == [], "aliases shadowed by another entry: #{inspect(shadowed)}"
+    end
   end
 
   describe "vocabulary stability" do
