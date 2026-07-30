@@ -157,8 +157,9 @@ defmodule Fermata.Corpus do
   end
 
   defp tokenize_file(file, format) do
-    with {:ok, score} <- parse_file(file, format) do
-      {:ok, Tokenizer.encode_ids(score)}
+    with {:ok, score} <- parse_file(file, format),
+         {:ok, ids} <- Tokenizer.encode_ids(score) do
+      {:ok, ids}
     end
   rescue
     e -> {:error, {:crash, e.__struct__}}

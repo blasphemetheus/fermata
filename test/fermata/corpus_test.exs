@@ -18,7 +18,7 @@ defmodule Fermata.CorpusTest do
     assert index.errors == []
 
     {:ok, score} = Kern.Parser.parse(File.read!(@chorale))
-    expected = Tokenizer.encode_ids(score)
+    expected = Tokenizer.encode_ids!(score)
     assert n == length(expected)
 
     assert Corpus.read_sequence(dir, entry) == expected
@@ -26,10 +26,10 @@ defmodule Fermata.CorpusTest do
 
   test "ingest_files records parse failures with typed reasons", %{dir: dir} do
     bad = Path.join(System.tmp_dir!(), "bad_#{System.unique_integer([:positive])}.krn")
-    # An 11-tuplet: past the ratios the fixed divisions can express, so
-    # still refused. (A plain triplet parses now, as does the *^ split
-    # this fixture used before either was implemented.)
-    File.write!(bad, "**kern\n11c\n*-\n")
+    # A 17-tuplet: past the ratios the fixed divisions can express, so
+    # still refused. (11- and 13-tuplets parse since polish_scores, as
+    # does the *^ split this fixture used before it was implemented.)
+    File.write!(bad, "**kern\n17c\n*-\n")
     on_exit(fn -> File.rm!(bad) end)
 
     {:ok, index} = Corpus.ingest_files([@chorale, bad], dir, :kern)

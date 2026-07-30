@@ -86,7 +86,7 @@ defmodule Fermata.Kern.ParserTest do
 
   test "kern output feeds the tokenizer round-trip" do
     {:ok, score} = Kern.Parser.parse(@chorale)
-    round_tripped = score |> Tokenizer.encode_ids() |> Tokenizer.decode_ids()
+    round_tripped = score |> Tokenizer.encode_ids!() |> Tokenizer.decode_ids()
 
     assert %{round_tripped | title: score.title, composer: score.composer} == score
   end
@@ -175,7 +175,7 @@ defmodule Fermata.Kern.ParserTest do
     """
 
     assert {:ok, score} = Kern.Parser.parse(kern)
-    round_tripped = score |> Tokenizer.encode_ids() |> Tokenizer.decode_ids()
+    round_tripped = score |> Tokenizer.encode_ids!() |> Tokenizer.decode_ids()
 
     assert %{round_tripped | title: score.title, composer: score.composer} == score
   end
@@ -243,20 +243,20 @@ defmodule Fermata.Kern.ParserTest do
     """
 
     assert {:ok, score} = Kern.Parser.parse(kern)
-    round_tripped = score |> Tokenizer.encode_ids() |> Tokenizer.decode_ids()
+    round_tripped = score |> Tokenizer.encode_ids!() |> Tokenizer.decode_ids()
 
     assert %{round_tripped | title: score.title, composer: score.composer} == score
   end
 
   test "rejects tuplet ratios the divisions cannot express" do
-    # 11-tuplets need a divisions constant 11x larger; refuse rather than
-    # round the durations.
+    # 17-tuplets need a divisions constant 17x larger; refuse rather than
+    # round the durations. (11 and 13 are supported since polish_scores.)
     kern = """
     **kern
-    11c
+    17c
     *-
     """
 
-    assert {:error, {:unsupported_tuplet, 11}} = Kern.Parser.parse(kern)
+    assert {:error, {:unsupported_tuplet, 17}} = Kern.Parser.parse(kern)
   end
 end

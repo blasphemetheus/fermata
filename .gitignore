@@ -30,3 +30,11 @@ fermata-*.tar
 
 # ad-hoc downloaded kern files in the repo root
 /*.krn
+
+# devenv
+/.devenv/
+/.devenv.flake.nix
+/.direnv/
+/.nix-mix/
+/.nix-hex/
+devenv.lock

@@ -30,6 +30,7 @@ defmodule Fermata.Vocab do
 
   @max_parts 32
   @max_voices 8
+  @frozen_tuplet_ratios [{3, 2}, {5, 4}, {7, 4}, {9, 8}]
   @octaves 0..8
   @alters -2..2
   @time_numerators 1..16
@@ -69,10 +70,17 @@ defmodule Fermata.Vocab do
     # APPEND-ONLY past this point — see @moduledoc.
     voices = for v <- 1..@max_voices, do: {:voice, v}
     later_instruments = for i <- Instruments.added(), do: {:instrument, i}
-    tuplets = for {actual, normal} <- Duration.tuplet_ratios(), do: {:tuplet, actual, normal}
+    # The first four ratios are frozen here by value, not taken from
+    # Duration: growing Duration.tuplet_ratios/0 in place would shift
+    # the triple-dot ids below. Ratios added later append at the end.
+    tuplets = for {actual, normal} <- @frozen_tuplet_ratios, do: {:tuplet, actual, normal}
     triple_dots = for type <- Duration.types(), do: {:dur, type, 3}
 
-    phase_0 ++ voices ++ later_instruments ++ tuplets ++ triple_dots
+    later_tuplets =
+      for {actual, normal} <- Duration.tuplet_ratios() -- @frozen_tuplet_ratios,
+          do: {:tuplet, actual, normal}
+
+    phase_0 ++ voices ++ later_instruments ++ tuplets ++ triple_dots ++ later_tuplets
   end
 
   @doc "Map of token → integer id."

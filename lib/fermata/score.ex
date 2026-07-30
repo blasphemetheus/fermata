@@ -157,20 +157,24 @@ defmodule Fermata.Duration do
     * 64 covers binary values down to a double-dotted 64th (7/64 of a
       quarter), which is why that duration is now representable — it was
       the one gap when divisions were 32.
-    * the LCM of the supported tuplet counts (#{inspect([3, 5, 7, 9])})
-      covers dividing a beat into thirds, fifths, sevenths and ninths.
+    * the LCM of the supported tuplet counts (#{inspect([3, 5, 7, 9, 11, 13, 15])})
+      covers dividing a beat into thirds through fifteenths.
 
-  Hence #{20160} per quarter. It makes for large numbers in the XML and
-  costs nothing else — the IR itself stores durations symbolically, so
-  divisions only exist at the MusicXML boundary and in internal offset
-  arithmetic. Supporting 11- or 13-tuplets means adding them to
-  `@tuplet_actuals`, at the price of a proportionally larger constant.
+  Hence #{64 * 45045} per quarter. It makes for large numbers in the XML
+  and costs nothing else — the IR itself stores durations symbolically,
+  so divisions only exist at the MusicXML boundary and in internal
+  offset arithmetic. Supporting further tuplet counts means adding them
+  to `@tuplet_actuals`, at the price of a proportionally larger
+  constant. (11 and 13 were added for the polish_scores corpus; 15 was
+  free, its factors already being in the LCM.)
   """
 
   # Tuplet counts we can represent exactly. The conventional partner for
-  # each is the largest power of two below it: 3:2, 5:4, 7:4, 9:8.
-  @tuplet_actuals [3, 5, 7, 9]
-  @tuplet_ratios [{3, 2}, {5, 4}, {7, 4}, {9, 8}]
+  # each is the largest power of two below it: 3:2, 5:4, ..., 15:8.
+  # Append-only: Fermata.Vocab freezes the token ids of the first four
+  # and appends the rest at the vocab's end.
+  @tuplet_actuals [3, 5, 7, 9, 11, 13, 15]
+  @tuplet_ratios [{3, 2}, {5, 4}, {7, 4}, {9, 8}, {11, 8}, {13, 8}, {15, 8}]
 
   @tuplet_lcm Enum.reduce(@tuplet_actuals, 1, fn a, acc -> div(acc * a, Integer.gcd(acc, a)) end)
   @divisions 64 * @tuplet_lcm

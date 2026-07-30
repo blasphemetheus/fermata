@@ -17,7 +17,7 @@ defmodule Fermata do
   alias Fermata.{MusicXML, Render, Score, Tokenizer}
 
   @doc "Encode a score to integer token ids."
-  def to_tokens(%Score{} = score), do: Tokenizer.encode_ids(score)
+  def to_tokens(%Score{} = score), do: Tokenizer.encode_ids!(score)
 
   @doc "Decode integer token ids back to a score."
   def from_tokens(ids) when is_list(ids), do: Tokenizer.decode_ids(ids)

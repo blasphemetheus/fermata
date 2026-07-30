@@ -112,10 +112,44 @@ defmodule Fermata.Tokenizer do
   defp tuplet(nil), do: []
   defp tuplet({actual, normal}), do: [{:tuplet, actual, normal}]
 
-  def encode_ids(%Score{} = score) do
-    mapping = Vocab.token_to_id()
-    score |> encode() |> Enum.map(&Map.fetch!(mapping, &1))
+  @doc """
+  Encode to integer ids, refusing scores the vocabulary cannot express.
+
+  Returns `{:ok, ids}` or a typed error — `{:too_many_parts, n}`,
+  `{:unsupported_time, {n, d}}`, `{:key_out_of_range, fifths}`, or
+  `{:unknown_token, token}` — rather than raising, so corpus ingestion
+  counts these as refusals, not crashes (mensural meters like 2/3 and
+  9-accidental keys occur in real kern corpora).
+  """
+  def encode_ids(%Score{parts: parts} = score) do
+    if length(parts) > Vocab.max_parts() do
+      {:error, {:too_many_parts, length(parts)}}
+    else
+      mapping = Vocab.token_to_id()
+      map_ids(encode(score), mapping, [])
+    end
   end
+
+  @doc "Like `encode_ids/1` but raises on refusal; for pipelines."
+  def encode_ids!(%Score{} = score) do
+    case encode_ids(score) do
+      {:ok, ids} -> ids
+      {:error, reason} -> raise ArgumentError, "cannot tokenize score: #{inspect(reason)}"
+    end
+  end
+
+  defp map_ids([], _mapping, acc), do: {:ok, Enum.reverse(acc)}
+
+  defp map_ids([token | rest], mapping, acc) do
+    case Map.fetch(mapping, token) do
+      {:ok, id} -> map_ids(rest, mapping, [id | acc])
+      :error -> {:error, refusal(token)}
+    end
+  end
+
+  defp refusal({:time, n, d}), do: {:unsupported_time, {n, d}}
+  defp refusal({:key, fifths}), do: {:key_out_of_range, fifths}
+  defp refusal(token), do: {:unknown_token, token}
 
   # ── Decode ──────────────────────────────────────────────────────────
 

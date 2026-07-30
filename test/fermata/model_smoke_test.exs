@@ -22,7 +22,7 @@ defmodule Fermata.ModelSmokeTest do
   @steps 10
 
   test "bf16 policy trains without NaN/Inf and the loss goes down" do
-    ids = Tokenizer.encode_ids(Chorale.score())
+    ids = Tokenizer.encode_ids!(Chorale.score())
     vocab_size = Fermata.Vocab.size()
 
     model =
