@@ -287,4 +287,63 @@ defmodule Fermata.Duration do
   def from_divisions!(divs) do
     from_divisions(divs) || raise ArgumentError, "no notated duration for #{divs} divisions"
   end
+
+  @doc """
+  Decompose a span of divisions into notatable rest values, largest
+  first: `{:ok, [{duration, tuplet}]}` or `:error`.
+
+  Both parsers use this to pad a voice that enters (or resumes) away
+  from where the previous event left off. A binary span decomposes into
+  plain rests; a tuplet offset (a voice arriving two-thirds of a beat
+  in, say) is split per supported ratio into a binary part plus the
+  smallest count of that ratio's grain that makes the binary part whole,
+  each part then decomposing greedily and exactly.
+  """
+  @units for type <- @types, do: {Map.fetch!(@base, type), type}
+  @smallest @types |> List.last() |> then(&Map.fetch!(@base, &1))
+
+  def decompose_rests(0), do: {:ok, []}
+
+  def decompose_rests(divisions) when is_integer(divisions) and divisions > 0 do
+    case binary_span(divisions, nil) do
+      {rests, 0} -> {:ok, rests}
+      _ -> tuplet_span(divisions)
+    end
+  end
+
+  def decompose_rests(_divisions), do: :error
+
+  defp binary_span(divisions, tuplet) do
+    Enum.reduce(@units, {[], divisions}, fn {unit, type}, {rests, left} ->
+      scaled =
+        case tuplet do
+          nil -> unit
+          {actual, normal} -> if rem(unit * normal, actual) == 0, do: div(unit * normal, actual)
+        end
+
+      if scaled == nil do
+        {rests, left}
+      else
+        {rests ++ List.duplicate({{type, 0}, tuplet}, div(left, scaled)), rem(left, scaled)}
+      end
+    end)
+  end
+
+  defp tuplet_span(divisions) do
+    Enum.find_value(@tuplet_ratios, :error, fn {actual, normal} = ratio ->
+      grain = div(@smallest * normal, actual)
+
+      Enum.find_value(1..(actual - 1), fn k ->
+        binary_part = divisions - k * grain
+
+        with true <- binary_part >= 0 and rem(binary_part, @smallest) == 0,
+             {binary, 0} <- binary_span(binary_part, nil),
+             {tuplets, 0} <- binary_span(k * grain, ratio) do
+          {:ok, binary ++ tuplets}
+        else
+          _ -> nil
+        end
+      end)
+    end)
+  end
 end

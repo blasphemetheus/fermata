@@ -7,13 +7,16 @@ defmodule Fermata.MusicXML.Parser do
   `<type>` + `<dot/>` when present (independent of the file's divisions),
   falling back to `<duration>` scaled by the file's `<divisions>`.
 
-  Multi-voice measures are read via `<voice>`; `<backup>` needs no special
-  handling because voices are written in document order, one group after
-  another, which is exactly the IR's voice-grouped event order.
-
-  Not yet handled (fine for our own writer's output, needed later for
-  PDMX ingestion): `<forward>`, interleaved (non-grouped) voices, tuplets,
-  grace notes.
+  Multi-voice measures are read positionally: `<backup>` and `<forward>`
+  move a running cursor, every event is recorded at its cursor position,
+  and at the measure boundary events regroup per voice (in order of
+  first appearance, densely renumbered — MusicXML piano voices are often
+  1 and 5). A voice that starts or resumes away from where it left off
+  gets the gap padded with rests (`Duration.decompose_rests/1`), which
+  is how the IR encodes voice position. Overlapping events inside one
+  voice and gaps our divisions cannot express are typed refusals.
+  Grace notes are dropped, as in the kern parser. `<staff>` is ignored:
+  staff assignment is presentation, voices carry the content.
   """
 
   @behaviour Saxy.Handler
@@ -25,6 +28,8 @@ defmodule Fermata.MusicXML.Parser do
       {:ok, state} -> {:ok, build_score(state)}
       {:error, reason} -> {:error, reason}
     end
+  catch
+    {:refuse, reason} -> {:error, reason}
   end
 
   def parse!(xml) do
@@ -47,7 +52,10 @@ defmodule Fermata.MusicXML.Parser do
       parts: %{},
       cur_part_id: nil,
       cur_measure: nil,
+      # entries {position, duration, event} in file divisions, newest first
       cur_events: [],
+      position: 0,
+      chord_start: 0,
       note: nil,
       divisions: Duration.divisions()
     }
@@ -93,7 +101,7 @@ defmodule Fermata.MusicXML.Parser do
         :error -> length(Map.get(state.parts, state.cur_part_id, [])) + 1
       end
 
-    %{state | cur_measure: %Measure{number: number}, cur_events: []}
+    %{state | cur_measure: %Measure{number: number}, cur_events: [], position: 0, chord_start: 0}
   end
 
   defp start_element("note", _attrs, state),
@@ -104,6 +112,7 @@ defmodule Fermata.MusicXML.Parser do
           ties: [],
           chord: false,
           rest: false,
+          grace: false,
           alter: 0,
           voice: 1,
           actual: nil,
@@ -116,6 +125,9 @@ defmodule Fermata.MusicXML.Parser do
 
   defp start_element("rest", _attrs, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note.rest, true)
+
+  defp start_element("grace", _attrs, %{note: note} = state) when not is_nil(note),
+    do: put_in(state.note.grace, true)
 
   defp start_element("tie", attrs, %{note: note} = state) when not is_nil(note),
     do: update_in(state.note.ties, &[attrs["type"] | &1])
@@ -193,6 +205,16 @@ defmodule Fermata.MusicXML.Parser do
   defp end_element("duration", text, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note[:duration_div], String.to_integer(text))
 
+  # <backup>/<forward> move the measure cursor; their <duration> arrives
+  # outside any <note>.
+  defp end_element("duration", text, %{note: nil} = state) do
+    cond do
+      in_element?(state, "backup") -> %{state | position: state.position - String.to_integer(text)}
+      in_element?(state, "forward") -> %{state | position: state.position + String.to_integer(text)}
+      true -> state
+    end
+  end
+
   defp end_element("type", text, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note[:type], String.to_existing_atom(text))
 
@@ -208,19 +230,98 @@ defmodule Fermata.MusicXML.Parser do
   defp end_element("normal-notes", text, %{note: note} = state) when not is_nil(note),
     do: put_in(state.note[:normal], String.to_integer(text))
 
+  defp end_element("note", _text, %{note: %{grace: true}} = state),
+    do: %{state | note: nil}
+
   defp end_element("note", _text, %{note: note} = state) do
     event = build_event(note, state.divisions)
-    %{state | note: nil, cur_events: [event | state.cur_events]}
+
+    dur =
+      note[:duration_div] ||
+        throw({:refuse, {:missing_duration_element, describe(event)}})
+
+    if note.chord do
+      # Chord members sound at the chord's start and do not advance.
+      %{state | note: nil, cur_events: [{state.chord_start, dur, event} | state.cur_events]}
+    else
+      %{
+        state
+        | note: nil,
+          cur_events: [{state.position, dur, event} | state.cur_events],
+          chord_start: state.position,
+          position: state.position + dur
+      }
+    end
   end
 
   defp end_element("measure", _text, %{cur_measure: %Measure{} = m} = state) do
-    m = %{m | events: Enum.reverse(state.cur_events), clef: normalize_clef(m.clef)}
+    events = state.cur_events |> Enum.reverse() |> regroup_voices(state.divisions)
+    m = %{m | events: events, clef: normalize_clef(m.clef)}
 
     parts = Map.update(state.parts, state.cur_part_id, [m], &[m | &1])
     %{state | parts: parts, cur_measure: nil, cur_events: []}
   end
 
   defp end_element(_name, _text, state), do: state
+
+  # ── Voice layout ────────────────────────────────────────────────────
+
+  # Rebuild the IR's voice-grouped, contiguous event order (the
+  # Measure.voice_groups/1 invariant) from positioned events in document
+  # order. Voices keep first-appearance order and are renumbered densely
+  # from 1. Within a voice, a positional gap (a <forward>, or a voice
+  # entering mid-measure) becomes explicit rests; an overlap is refused.
+  defp regroup_voices(entries, file_divisions) do
+    entries
+    |> Enum.map(fn {_pos, _dur, event} -> event.voice end)
+    |> Enum.uniq()
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {voice, dense} ->
+      entries
+      |> Enum.filter(fn {_pos, _dur, event} -> event.voice == voice end)
+      |> lay_out_voice(dense, file_divisions)
+    end)
+  end
+
+  defp lay_out_voice(entries, dense, file_divisions) do
+    {events, _expected} =
+      Enum.reduce(entries, {[], 0}, fn {pos, dur, event}, {acc, expected} ->
+        event = %{event | voice: dense}
+
+        cond do
+          match?(%Note{chord: true}, event) ->
+            {[event | acc], expected}
+
+          pos == expected ->
+            {[event | acc], pos + dur}
+
+          pos > expected ->
+            pad = gap_rests(pos - expected, file_divisions, dense)
+            {[event | Enum.reverse(pad, acc)], pos + dur}
+
+          true ->
+            throw({:refuse, {:overlapping_voice, dense}})
+        end
+      end)
+
+    Enum.reverse(events)
+  end
+
+  defp gap_rests(gap, file_divisions, voice) do
+    ours = gap * Duration.divisions()
+
+    with 0 <- rem(ours, file_divisions),
+         {:ok, rests} <- Duration.decompose_rests(div(ours, file_divisions)) do
+      Enum.map(rests, fn {duration, tuplet} ->
+        %Rest{duration: duration, tuplet: tuplet, voice: voice}
+      end)
+    else
+      _ -> throw({:refuse, {:unrepresentable_offset, gap}})
+    end
+  end
+
+  defp describe(%Note{step: step, octave: octave}), do: "note #{step}#{octave}"
+  defp describe(%Rest{}), do: "rest"
 
   # ── Builders ────────────────────────────────────────────────────────
 
