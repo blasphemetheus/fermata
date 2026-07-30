@@ -1,81 +1,75 @@
 <original_task>
-Plan a small language model project ("Fermata", chosen from candidate names; placeholder was "mx") for composing multi-part music (duets through symphonies) with sheet-music output. Research the existing space (models, datasets, output pipelines, Elixir/Nx feasibility), write a project plan with scope and name candidates, then begin Phase 0 implementation. Stack: Elixir, Nx, Axon, Edifice (user maintains Edifice). Training hardware: RTX 5090 (32GB) at the user's home; development currently on a laptop while the user is on vacation in Florida. User: Bradley Fargo, prefers Elixir over Python, workspace is /home/dori/git/melee (Melee-AI workspace; Fermata is unrelated to Melee but lives there).
+Fermata: a small language model for composing multi-part music with engraved sheet-music output, built in Elixir/Nx/Axon/Edifice to learn LLMs by building one from scratch. USER'S REAL GOAL (stated 2026-07-27): learn about LLMs by making one where the "language" is music notation; first concrete deliverable is a playable CLARINET + CELLO DUET the user and their brother can perform. Explanations of LLM concepts matter as much as shipping. Explanatory output style active (★ Insight blocks).
 </original_task>
 
 <work_completed>
-## Research phase (3 parallel agents; full reports are in this conversation's history — key facts extracted below into critical_context and PLAN.md)
-- Models/tokenization report: small models win in this domain (SymphonyGen 124M beat NotaGen 516M on orchestral musicality); interleaved-ABC / measure-interleaving solves cross-voice alignment; vanilla BPE degrades multi-track (SAGE-Music); full symphony movement = 50K+ tokens, exceeds all published contexts.
-- Datasets/output report: PDMX `no_license_conflict` (222,856 public-domain MusicXML scores) + OpenScore Lieder/StringQuartets (CC0) + KernScores + Mutopia = fully copyright-clean stack (~260K scores, weak orchestral coverage); SOD/SymphonyNet are the orchestral corpora but with murky licenses; generate score-level tokens directly, MIDI only as derived export; Verovio is the right renderer (no display server), MuseScore 4 headless needs Xvfb (avoid); no MusicXML/ABC/LilyPond libraries exist on hex.
-- Elixir stack report (arrived late; agent appeared stalled but wasn't): sm_120/Blackwell solved in xla 0.10.0 cuda12 prebuilts — verified by the USER'S OWN PR (elixir-nx/xla PR #127, handle blasphemetheus); Edifice gaps: build_lm/1 has no trainable embedding, generate/3 "cached" path is semantically wrong (attends over zeros — use generate_simple/3), Training.remat/2 gradient checkpointing is a no-op; Axon has no gradient accumulation, Polaris has no LR warmup and linear_decay ignores init_value; no flash attention in XLA → O(seq²) activation memory → Edifice's 40+ subquadratic backbones are the strategic answer; expected 30–60k tok/s at 100M params on the 5090, Chinchilla 2B tokens ≈ 10–16h; largest published from-scratch Axon transformer is only ~11M (CPU, 2023) — this project is frontier territory for the ecosystem.
+## Earlier sessions (3ef5f75, 4c8e3e1, d7b4c27)
+Score IR, enumerated vocab, tokenizer (exact round-trip), MusicXML 4.0 writer+parser (Saxy), Humdrum kern parser, Verovio/rsvg render wrapper, model numerics rig (bf16 + f32 loss), SATB fixture, property tests. Phase 0 exit criterion met (real Bach engraved and visually verified). Corpus pipeline: `mix fermata.corpus <source>` → download (shallow git clone) → parse → tokenize → flat u16 LE tokens.bin + index.etf, with coverage/percentile stats.
 
-## Plan
-- /home/dori/git/melee/fermata/PLAN.md — complete project plan: score-token (not MIDI) representation, measure-interleaved custom vocab (~527 tokens, no BPE), staged datasets by license, Edifice backbone strategy with §5.1 known-gaps list (including the Polaris apply_updates/2 nil bug found during implementation), §5.2 throughput estimates, phases 0–4, name candidates. Name "Fermata" chosen by user; directory renamed mx → fermata; PLAN.md updated.
+## This session (ab750d0, 3ab75d7, ee077b9, 6902917, 7e7f24b)
 
-## Phase 0 implementation (all in /home/dori/git/melee/fermata; mix project, git initialized, NO commits yet)
-- mix.exs: deps saxy ~1.6, nx ~0.13, axon ~0.8, polaris ~0.1, stream_data (test/dev); exla commented out with note (enable on 5090, XLA_TARGET=cuda12); elixirc_paths includes test/support.
-- lib/fermata/score.ex: IR structs — Score, Part, Measure (key fifths/time tuple/clef, nil unless stated), Note (spelled: step/alter/octave, duration {type, dots}, tie, chord), Rest, Duration (fixed divisions=32; divisions_for/1 and from_divisions/1; rejects double-dotted 64th).
-- lib/fermata/instruments.ex: 32-instrument roster, atom↔display-name↔default-clef; APPEND-ONLY ordering (token ids derive from position).
-- lib/fermata/vocab.ex: 527-token enumerated vocab (specials, key -7..7, time sigs 1..16 × [1,2,4,8,16,32], 5 clefs, instruments, part markers 0..31, pitches 7×5×9, durations 8×3). Append-only once training data exists.
-- lib/fermata/tokenizer.ex: encode/decode (symbolic) + encode_ids/decode_ids (integers). Layout: <bos> instrument+ (:measure ({:part,n} attrs? events)+)+ <eos>. Exact round-trip. Decoder assumes well-formed input (crashes on malformed — future: constrained sampling).
-- lib/fermata/music_xml/writer.ex: score-partwise 4.0 emitter (iodata, no deps). DTD element order matters: <tie> before <type>, <notations><tied> after <dot/>.
-- lib/fermata/music_xml/parser.ex: Saxy SAX handler for the same subset. Durations reconstructed from <type>+<dot> (divisions-independent) with <duration>-scaling fallback. NOT yet handled: backup/forward (multi-voice), tuplets, grace notes — needed for PDMX ingestion later.
-- lib/fermata/kern/parser.ex: Humdrum **kern parser — spines→parts (reversed: kern is bass-first, IR is top-voice-first), *I" names, *clef/*k[]/*M interpretations (*MM matched before *M), kern octaves (c=C4, CC=C2), ties [/]/_, chords (space-separated), rests, null tokens, !!!COM/!!!OTL. Returns typed errors for spine manipulators (*^ *v *x *+) and non-binary durations (e.g. {:unsupported_duration, 12}) instead of mis-parsing.
-- lib/fermata/render.ex: Verovio→SVG (multi-page aware: score_001.svg naming), SVG→PDF via rsvg-convert, available/0 detection, {:error, {:renderer_not_found, name}} when missing.
-- lib/fermata/model.ex: Model.build/1 — token embedding → N pre-norm residual MLP blocks → final_norm → lm_head; :bf16 option applies mixed-precision policy (params f32 / compute bf16 / output f32) EXCLUDING norm ops; Model.loss/2 casts logits to f32 at entry (exphil NaN lesson) and adds trailing axis for sparse categorical_cross_entropy. This is a numerics rig — production backbone comes from Edifice later.
-- lib/fermata.ex: convenience API (to_tokens/from_tokens/to_musicxml/from_musicxml/render_pdf/render_svg).
-- test/support/chorale.ex: hand-written 3-measure SATB chorale fixture (C major, authentic cadence, includes tie + dotted half + rest).
-- test/support/generators.ex: StreamData generators for valid random scores (no double-dotted 64ths, no leading chord, uniform measure counts, 1-based numbering).
-- Tests (ALL GREEN: 20 tests + 2 properties, 0 failures, ~2.7s): vocab_test, tokenizer_test (fixture + property round-trip), music_xml_test (writer assertions, escaping, fixture + property round-trip), kern_parser_test (7 tests incl. error cases), render_test (works with or without verovio), model_smoke_test (bf16 trains 10 steps on real chorale tokens, loss finite + decreasing, params finite; @moduletag timeout 180_000).
-- examples/render_chorale.exs: Phase 0 exit-criterion demo — encodes chorale to 121 token ids, decodes, writes examples/out/chorale.musicxml, renders SVG/PDF if verovio present. Ran successfully up to the render step (verovio was absent).
-- Task list #1–#7 all completed.
+1. **Edifice build_lm embedding fix** (upstream commit edifice 73704a4, PLAN.md §5.1 gap #1 CLOSED).
+   - `Generate.build_lm` now prepends `Axon.embedding`; models take integer `"token_ids"` and the table lives in `Axon.ModelState`, so it TRAINS. Previously it was an `Nx.take` closure outside the model and never received gradients.
+   - Mechanism: new `:input` override on `ModelBuilder.build_sequence_model`, the bottleneck ~40 sequence architectures share. `embedding: :external` preserves legacy float-input behavior; `build_lm` raises if an arch ignores the override.
+   - Removed the semantically wrong "KV-cached" decode: `generate/3` (and `generate_stream`/`token_stream`) embedded only the newest token into an all-zeros buffer, so the model saw NO history. All paths now re-run the full padded sequence. Generation accepts raw token ids (`:pad_token`) when no `embed_fn` given.
+   - Edifice deps upgraded nx/exla 0.11 → 0.13 (its lock was inconsistent with the committed `nx ~> 0.12`; exla ≥0.12 also needed for the 5090).
+   - Fermata: edifice is now a path dep; `Model.build/1` takes `backbone: :builtin | <edifice arch atom>`; both expose `"token_ids"` → logits.
+
+2. **Kern spine splits + companion spines** → Beethoven quartets 1/71 → 40/71.
+   - `**dynam` and other non-kern spines ignored (was rejecting 67 files).
+   - `*^`/`*v` divisi split/merge parsed as IR voices. Parser restructured around DYNAMIC COLUMNS: parts fixed at the `**kern` header, voices created by `*^` and retired by `*v`.
+   - A voice entering mid-measure gets LEADING RESTS — MusicXML positions voices by accumulated duration, so without them a divisi entry lands on the wrong beat. Voices renumbered densely per measure.
+   - Multi-voice threads through: IR (`Note`/`Rest` `voice`, `Measure.voice_groups/1`), tokenizer (`{:voice, n}`, voice 1 implicit so single-voice output is unchanged), MusicXML (`<voice>` + `<backup>`).
+   - `*x`/`*+` still refused.
+
+3. **Instrument registry + transposition** (the "prompt for an Ab clarinet / Eb alto sax" request).
+   - `Fermata.Pitch` — spelled-pitch arithmetic in two coordinate systems: chromatic (sounding height) and LINE OF FIFTHS (spelling). A major key's line-of-fifths position IS its `<fifths>` number, so transposing a key signature is the same operation as transposing a pitch.
+   - `Fermata.Interval` — `{diatonic, chromatic}`, zero-based so intervals add by addition; identical to MusicXML `<transpose>` children.
+   - `Fermata.Transpose` — `to_written/to_concert` per instrument, `by_interval`, `to_key` (nearest/up/down), `out_of_range`. Moves pitches + key signature + `<transpose>` together. Preserves spelling (F# up m3 = A; Gb up m3 = Bbb). Keys outside -7..7 respelled enharmonically.
+   - Registry: 98 instruments (32 frozen Phase 0 + 66 added), 58 transposing, each with written→sounding interval, family, clef, sounding range, aliases.
+   - Fixed instrument identification: name lookup was exact-match only, so `*I"Cello` → `:voice` (roster said "Violoncello") and Humdrum `*I` codes were ignored entirely — which is why all 4 quartet parts read "Voice". Alias table now covers display names, abbreviations and `*I` codes, matched case/spacing/♭-spelling-insensitively.
+   - `mix fermata.instruments` browses it (filters: `--family`, `--transposing`, name search, `--aliases`), including a "what concert C major becomes" column.
+   - `examples/duet.exs` — arranges two chorale voices as a playable duet, any two registry instruments. VERIFIED by engraving: clarinet in A major over cello in G major, differing key signatures being the visual proof.
+
+4. **Tuplets** → Beethoven quartets 40/71 → **71/71 (100%)**.
+   - Decoding needs no table: a kern recip is the reciprocal of a whole note, so factoring N = 2^k × m (m odd) gives the tuplet directly — m is the actual-count, 2^k × normal the base type. 12 = 4×3 → triplet eighth; 40 = 8×5 → quintuplet 32nd; 112 = 16×7 → septuplet 64th.
+   - **Divisions changed 32 → 20160** = 64 × lcm(3,5,7,9). 32 cannot express a third of a beat. 64 covers binary values down to a double-dotted 64th (previously the one unrepresentable duration); the LCM covers thirds/fifths/sevenths/ninths. 11- and 13-tuplets = one edit to `@tuplet_actuals` at a proportionally larger constant.
+   - Written duration and ratio stored SEPARATELY, ratio on the event (mirrors MusicXML `<time-modification>`): a triplet eighth is `{:eighth, 0}` + `tuplet: {3, 2}`.
+   - Tuplet EXTENTS are not stored, only ratios, so the writer recovers groups: accumulate consecutive same-ratio events, close the group once their sounding total is itself a plain written value. Correctly splits six triplet eighths into two brackets of three. Verified by engraving 3/5/7-tuplets and reading the brackets.
+   - Triple dots supported (two files crashed on them). Dot arithmetic is now the general (2^(n+1)-1)/2^n as an exact integer ratio, so representability is a remainder check; parsers call `Duration.exact?/2` first, turning anything needing rounding into a typed error instead of a raise.
+
+Tests: 67 tests + 3 doctests + 2 properties, 0 failures. Property generators now produce multi-voice measures AND tuplets.
 </work_completed>
 
 <work_remaining>
-1. IMMEDIATE (user is installing verovio from AUR right now; lilypond already installed): run `mix run examples/render_chorale.exs` and confirm examples/out/chorale-1.svg and chorale.pdf look like a correct 4-part chorale. This completes the Phase 0 exit criterion. If verovio errors, inspect {:verovio_failed, code, out}.
-2. First git commit (user hasn't asked yet — ask or wait for request). Repo is initialized, nothing committed. Also decide whether whats-next.md and examples/out/ belong in .gitignore.
-3. Edifice upstream fixes (PLAN.md §5.1, benefits ExPhil too): (a) build_lm/1 trainable Axon.embedding — requires ModelBuilder.build_sequence_model to accept an input-node override (backbone input is currently hardcoded Axon.input("state_sequence")) — see /home/dori/git/melee/edifice/lib/edifice/blocks/model_builder.ex:81 and lib/edifice/serving/generate.ex:81; (b) fix or delete the broken generate/3 cached path (use generate_simple/3 meanwhile); (c) make Training.remat/2 actually checkpoint or fix its docs.
-4. Remaining Phase 0/1 prep: corpus download scripts (Bach chorales from kern.humdrum.org 370+ chorales; OpenScore repos; PDMX from Zenodo record 15571083 — use no_license_conflict subset), ingestion pipeline (parse → filter errors → tokenize → packed binary shards; pattern: exphil's lib/exphil/data/training_shards.ex), corpus stats (token counts, sequence-length distribution).
-5. Phase 0.5 (first day home at the 5090): XLA_TARGET=cuda12 env var (autodetection silently falls back to CPU without nvcc on PATH), uncomment exla dep, upgrade Edifice deps nx/exla 0.11→0.13 (5090 runtime_call crash fixed in exla 0.12), run edifice/bench/training_throughput.exs to replace the 30–60k tok/s estimate with a measurement.
-6. Phase 1: ~30M model on chorales via Edifice backbone (prefer subquadratic: mamba/samba/griffin — no flash attention in XLA makes attention O(seq²) memory); needs LR warmup hand-composed with Nx.select (Polaris linear_decay ignores init_value; cosine_decay is correct), and eventually KV-cache decoding (Bumblebee.Text.Generation is a viable template, ~1–2 days using its private Layers.Decoder helpers).
-7. Later parser coverage for PDMX ingestion: MusicXML backup/forward + multi-voice measures, tuplets, grace notes; tuplet support in IR/vocab (append-only vocab extension).
+1. **Push to GitHub**: repo `blasphemetheus/fermata`, PUBLIC, all 8 commits (user chose this). BLOCKED at time of writing: `gh auth status` reports the keyring token invalid — user needs `gh auth login -h github.com`. Then `gh repo create blasphemetheus/fermata --public --source=. --remote=origin --push`.
+2. **Phase 0.5 — first day at the 5090**: export `XLA_TARGET=cuda12` EXPLICITLY (autodetect silently falls back to CPU), uncomment exla in fermata's mix.exs (edifice's dep upgrade is already done), run `edifice/bench/training_throughput.exs` to replace the 30–60k tok/s estimate with a measurement.
+3. **Phase 1 training** on bach_chorales (210,974 tokens) and now beethoven_quartets (683,943 tokens, p50 9,688). ~30M params, Edifice subquadratic backbone preferred (no flash attention in XLA → O(seq²) attention memory). LR warmup hand-composed with `Nx.select` (Polaris `linear_decay` ignores `init_value`). Chorales are short (p50 519) so pack ~8 per 4K window instead of padding; quartets are long enough to need real context.
+4. **Instrument-conditioned + range-constrained sampling** — registry now has the ranges (`Instruments.in_range?/2`, `Transpose.out_of_range/2`).
+5. More duet-shaped data: OpenScore Lieder (MuseScore format, needs conversion), PDMX Zenodo 15571083 (needs MusicXML `<backup>`/`<forward>` multi-voice — backup is DONE now; forward and interleaved voices still missing).
+6. Housekeeping: no CLAUDE.md in fermata/ yet (test conventions, append-only vocab warning, renderer notes).
 </work_remaining>
 
-<attempted_approaches>
-- Axon training-step wiring (3 failures before success, all in test/fermata/model_smoke_test.exs):
-  (1) Closing over concrete input tensors inside Nx.Defn.value_and_grad → Axon.CompileError in embedding layer (Nx.Defn.Expr.parameter FunctionClauseError). Inputs must be traced jit arguments.
-  (2) Passing params.data as the jit arg with ModelState reconstructed via closure → Protocol.UndefinedError Nx.LazyContainer for nil. Correct idiom (copied from Axon.Loop.train_step, deps/axon/lib/axon/loop.ex:326-410): jit the whole step with ModelState as a traced argument, differentiate over Axon.ModelState.trainable_parameters(model_state), graft back via %{model_state | data: tp} inside the objective.
-  (3) Polaris.Updates.apply_updates/2 → same nil LazyContainer error: its optional `state` arg defaults to nil which nx 0.13 jit arg traversal rejects (Polaris 0.1 frozen since 2023). Worked around with a hand-rolled recursive tree Nx.add in the test. Recorded in PLAN.md §5.1.
-  (4) First passing config timed out at 60s: BinaryBackend emulates bf16 in software (Nx.Floating.load_bf16). Shrunk to seq 8 / batch 2 / steps 10 / embed 8 / hidden 16 + @moduletag timeout 180_000 → 2.3s.
-- Kern parser test failures were TEST bugs, not parser bugs (mis-indexed fixture: tie pair is within measure 2; chord occupies indices 0-1 shifting CC to index 2). Parser was correct as written.
-- mix new refused non-empty dir → `yes | mix new . --app fermata --module Fermata` inside the renamed dir worked; had to rm the generated lib/fermata.ex placeholder before writing our own (Write tool requires reading generated files first — rm then Write is cleaner).
-- MusicXML DTD ordering bug caught during writing: initially emitted <notations> before <type>; fixed by splitting tie_elements (before type) from tie_notations (after dots).
-- elixir-stack research agent appeared stalled (no idle notification, flat token use) — user asked; it eventually delivered a complete report ~25 min later. Its findings were folded into PLAN.md §5.1/5.2 after the plan was first written.
-- User's pacman mirror failures: `pacman-mirrors --fastest 5` is wrong syntax for v5.3 — correct is `sudo pacman-mirrors -f 5 && sudo pacman -Syyu`. lilypond is in official repos; verovio is AUR (`yay -S verovio`); swig only needed for verovio's Python bindings, not the CLI.
-</attempted_approaches>
-
 <critical_context>
-- REPRESENTATION DECISION (the core bet): generate score-level tokens directly (spelled pitches F#≠Gb, notated durations, measure-interleaved parts), NOT performance MIDI — sidesteps rhythm quantization/voice separation/enharmonic spelling at output. MusicXML only at the renderer boundary; MIDI only as derived export. Custom vocab is justified because we train from scratch (no text-LLM transfer to preserve — the only strong reason to use ABC). If Phase 1 underperforms, fallback with most evidence is NotaGen-style interleaved ABC.
-- APPEND-ONLY INVARIANTS: Instruments list order and Vocab.tokens/0 construction order determine token ids. Never reorder once any training data/checkpoints exist.
-- NUMERICS POLICY (from edifice/CLAUDE.md, exphil NaN incident): loss math ALWAYS f32 regardless of compute precision; norm layers excluded from bf16 downcast; Axon's dynamic loss scaler still APPLIES overflowed grads and never detects NaN (checks infinity only) — smoke-test bf16 on the exact backbone before long runs.
-- Duration.divisions is fixed at 32 (all binary types + up to 2 dots integer-representable; double-dotted 64th rejected). Tuplets out of scope Phase 0.
-- Kern spine order is bass-first; parser reverses so part 0 = top voice (matches MusicXML convention and the tokenizer's part indices).
-- Tokenizer sequence shape: <bos> {:instrument,_}+ then per measure: :measure, then per part: {:part,idx} [key/time/clef tokens if set on that Measure] events; note = [:chord]? {:pitch,s,a,o} {:dur,t,d} [:tie_start|:tie_stop]*; rest = :rest {:dur,t,d}; <eos>. Measure numbers regenerate 1..n on decode; title/composer are NOT in the token stream (tests compare modulo metadata).
-- Renderer facts: verovio multi-page output = score_001.svg pattern (Render.read_pages handles both); MuseScore 4 headless is broken without Xvfb (github.com/musescore/MuseScore/issues/17247) — avoided entirely; rsvg-convert already installed; lilypond installed (user, official repos); verovio being installed from AUR now.
-- 5090/EXLA: xla 0.10.0 cuda12 prebuilts contain native sm_120 (user verified in elixir-nx/xla PR #127); XLA_TARGET autodetects via `nvcc --version` and SILENTLY falls back to cpu — always set XLA_TARGET=cuda12 explicitly; need exla ≥0.12 for the 5090 runtime_call fix (nx issue #1687 was reported on this exact stack).
-- Axon/Polaris route-arounds (PLAN.md §5.1): no gradient accumulation (removed 2024); AdamW weight decay option is `:decay` and hits biases/norms (no param masking); Loop resume is epoch-granular (prefer iterations: on infinite replayable streams); Polaris.Updates.apply_updates/2 broken under nx 0.13 (nil default state); always Axon.build(model, compiler: EXLA) on GPU (~100× call overhead otherwise).
-- Data loading pattern for training (not yet built): packed binary shards + :file.pread/2 scatter-gather (takes a LIST of {offset,len}) + Stream.repeatedly; Nx.from_binary is native-endian; no mmap needed at these sizes.
-- Environment: Manjaro, zsh, Elixir 1.18.4, nx 0.13.0/axon 0.8.1/polaris 0.1.0 locked; scratchpad for temp files (never /tmp directly); NEVER pipe test output through head/tail — redirect to file then parse (user's global CLAUDE.md); no emojis; ask before non-obvious choices.
-- Edifice repo is at /home/dori/git/melee/edifice (nx 0.11 locked there — 2 minors behind); exphil at /home/dori/git/melee/exphil (training_shards.ex is the data-pipeline prior art).
-- Explanatory output style is active: provide ★ Insight blocks around code work.
+- **APPEND-ONLY TOKEN IDS.** Ids 0..526 are frozen (corpus shards + any trained embedding index them). `Vocab.tokens/0` builds a `phase_0` block, then appends. Instrument tokens sit INSIDE that block, so new instruments go in `Instruments.@added` (appended at the END of the vocab), never in `@phase_0`. Same for `{:voice, n}`, `{:tuplet, a, n}`, 3-dot durations. VERIFY after any vocab change: `mix fermata.corpus bach_chorales` must still report exactly 210,974 tokens.
+- Corpus binary format: tokens.bin = u16 little-endian ids; index.etf = `term_to_binary` map with entries `[%{key:, offset: (bytes), tokens:}]` + typed errors. data/ is gitignored, regenerate in seconds.
+- REPRESENTATION BET (PLAN.md §1): score-level tokens (spelled pitches, notated durations, measure-interleaved parts), NOT performance MIDI. MusicXML only at the renderer boundary. Fallback if Phase 1 underperforms: NotaGen-style interleaved ABC.
+- IR is CONCERT PITCH. Written-pitch transposition is a rendering-time step (`Transpose.to_written/2`), deliberately outside the token stream — `Part.transpose` is presentation metadata the tokenizer ignores.
+- Same-voice events must be CONTIGUOUS within a measure; `Measure.voice_groups/1` is the single place that invariant is read. Both parsers produce grouped output; the tokenizer and writer rely on it for exact round-trips.
+- NUMERICS: loss math ALWAYS f32; norms excluded from bf16; Axon's dynamic loss scaler applies overflowed grads and only detects inf (not NaN) — smoke-test bf16 on the exact backbone before long runs.
+- `Polaris.Updates.apply_updates/2` broken under nx 0.13 (nil default state rejected by jit traversal) — hand-rolled tree `Nx.add` in test/fermata/model_smoke_test.exs is the workaround.
+- 5090/EXLA: xla 0.10.0 cuda12 prebuilts have sm_120; `XLA_TARGET` autodetects via nvcc and SILENTLY falls back to CPU. Always `Axon.build(model, compiler: EXLA)`.
+- Kern spine order is bass-first; parser reverses so part 0 = top voice.
+- Renderers: verovio + lilypond + rsvg-convert installed and working. Verovio multi-page = `score_001.svg` naming.
+- Environment: Manjaro, zsh, Elixir 1.18.4, nx 0.13.0/axon 0.8.1/polaris 0.1.0; exla commented out until the 5090. NEVER pipe test output through head/tail/grep — redirect to a file then read. No emojis. Prefer Elixir over Python for scripting (user called this out). Ask before non-obvious choices.
+- Edifice at /home/dori/git/melee/edifice (now nx 0.13, has 1 uncommitted-at-session-start state plus commit 73704a4).
+- PLAN.md is authoritative for design; §5.1 lists Edifice/Axon/Polaris gaps; §7 phases.
 </critical_context>
 
 <current_state>
-- Phase 0 core: COMPLETE and green (20 tests + 2 properties, 0 failures). IR, 527-token vocab, tokenizer, MusicXML writer+parser, kern parser, render wrapper, model numerics rig + bf16 smoke test, chorale fixture, demo script.
-- Phase 0 exit criterion (engraved PDF of the chorale): PENDING ONLY on verovio install (in progress by user right now). Command: mix run examples/render_chorale.exs → expect examples/out/chorale-1.svg + chorale.pdf. examples/out/chorale.musicxml already written and valid.
-- PLAN.md: current and authoritative (includes all research findings + implementation discoveries). whats-next.md (this file) is in the repo root — consider gitignoring or deleting after handoff.
-- Git: repo initialized on branch main (default), ZERO commits — everything untracked. User has not requested a commit.
-- Task tracker: tasks #1–#7 all completed; no open tasks.
-- No CLAUDE.md exists in fermata/ yet — worth creating one (mix test conventions, append-only vocab warning, renderer notes) when convenient.
-- Deps fetched and compiling clean on laptop (CPU-only; exla commented out).
-- Open questions: PLAN.md §9 — ABC export (low priority), Phase 3 hierarchical vs long-context backbone (decide with Phase 2 data), upstream Edifice fixes as PRs vs in-project patches first.
+- Corpus: bach_chorales 370/370 (210,974 tokens); beethoven_quartets **71/71** (683,943 tokens, p50 9,688 / max 18,739). Both training-ready.
+- Vocab size 613. Frozen boundary intact (`{:dur, :"64th", 2}` == id 526).
+- Tests: 67 + 3 doctests + 2 properties, 0 failures (~3s, CPU).
+- Git: 8 commits on main, NO REMOTE YET (see work_remaining #1). Working tree clean except this file.
+- User is on the laptop (CPU-only); 5090 tasks blocked until home.
 </current_state>
