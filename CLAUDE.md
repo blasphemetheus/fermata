@@ -134,3 +134,21 @@ Renderers `verovio`, `lilypond` and `rsvg-convert` are installed and
 working. Verovio emits multi-page output as `score_001.svg`
 (`Render.read_pages` handles the naming). MuseScore headless is avoided
 — it needs Xvfb.
+
+## Sharing edifice with exphil
+
+Fermata and exphil both path-depend on `../edifice`, and both are under
+active development at once. Working agreement:
+
+- `~/git/edifice` (main) is the stable shared dep. It stays green:
+  nothing lands on main unless `mix test` passes in **both** fermata and
+  exphil.
+- Edifice feature work happens in the `~/git/edifice-dev` worktree (or
+  additional worktrees), never by leaving `../edifice` dirty — a dirty
+  shared dep makes downstream failures ambiguous about which project
+  broke.
+- Fermata's edifice surface is small (`Generate.build_lm`,
+  `MixedPrecision`, `Checkpoint`) and guarded by
+  `test/fermata/model_smoke_test.exs` — run it after any edifice merge.
+  If exphil-driven churn ever bites, pin fermata to a git dep (exphil's
+  `EDIFICE_REPO` fallback in its mix.exs is the pattern to copy).

@@ -42,7 +42,8 @@ Tests: 67 tests + 3 doctests + 2 properties, 0 failures. Property generators now
 </work_completed>
 
 <work_remaining>
-1. **Push to GitHub**: repo `blasphemetheus/fermata`, PUBLIC, all 8 commits (user chose this). BLOCKED at time of writing: `gh auth status` reports the keyring token invalid — user needs `gh auth login -h github.com`. Then `gh repo create blasphemetheus/fermata --public --source=. --remote=origin --push`.
+1. **Dataset phase (2026-07-30)**: `docs/data-sources.md` (license-tiered corpus inventory) and `docs/composers.md` (composer who's-who; David Maslanka confirmed as the user's UMSL composer — under copyright, document only) are DONE. Four kern sources added and ingested: inventions 30/30 (44,239 tok), wtc_fugues 46/48 (128,616), haydn_quartets 209/210 (945,328), mozart_quartets 82/82 (428,399) — corpus total now ~2.4M tokens. Key finding: craigsapp/musedata kern encodings are CC BY-NC-SA (not PD); strictly clean stack is PDMX no_license_conflict + OpenScore + Polish Scores + Mutopia PD/CC-BY + BMdataset (PLAN.md §4 corrected). Next data steps: PDMX ingestion (needs MusicXML `<forward>` + interleaved-voice support), OpenScore .mscx conversion path, Polish Scores.
+2. **Parser follow-up**: `Kern.Parser.pad_rests/2` (parser.ex:530) only emits binary rests, so a voice entering at a tuplet offset crashes (wtc2f10.krn, "voice offset of 53760 divisions is not notatable" — needs tuplet rest padding; the comment claiming unreachability predates tuplet support). wtc1f20.krn refused on `*x` spine manipulation (known limitation).
 2. **Phase 0.5 — first day at the 5090**: export `XLA_TARGET=cuda12` EXPLICITLY (autodetect silently falls back to CPU), uncomment exla in fermata's mix.exs (edifice's dep upgrade is already done), run `edifice/bench/training_throughput.exs` to replace the 30–60k tok/s estimate with a measurement.
 3. **Phase 1 training** on bach_chorales (210,974 tokens) and now beethoven_quartets (683,943 tokens, p50 9,688). ~30M params, Edifice subquadratic backbone preferred (no flash attention in XLA → O(seq²) attention memory). LR warmup hand-composed with `Nx.select` (Polaris `linear_decay` ignores `init_value`). Chorales are short (p50 519) so pack ~8 per 4K window instead of padding; quartets are long enough to need real context.
 4. **Instrument-conditioned + range-constrained sampling** — registry now has the ranges (`Instruments.in_range?/2`, `Transpose.out_of_range/2`).
@@ -61,8 +62,8 @@ Tests: 67 tests + 3 doctests + 2 properties, 0 failures. Property generators now
 - 5090/EXLA: xla 0.10.0 cuda12 prebuilts have sm_120; `XLA_TARGET` autodetects via nvcc and SILENTLY falls back to CPU. Always `Axon.build(model, compiler: EXLA)`.
 - Kern spine order is bass-first; parser reverses so part 0 = top voice.
 - Renderers: verovio + lilypond + rsvg-convert installed and working. Verovio multi-page = `score_001.svg` naming.
-- Environment: Manjaro, zsh, Elixir 1.18.4, nx 0.13.0/axon 0.8.1/polaris 0.1.0; exla commented out until the 5090. NEVER pipe test output through head/tail/grep — redirect to a file then read. No emojis. Prefer Elixir over Python for scripting (user called this out). Ask before non-obvious choices.
-- Edifice at /home/dori/git/melee/edifice (now nx 0.13, has 1 uncommitted-at-session-start state plus commit 73704a4).
+- Environment (as of 2026-07-30, machine "blewf"): NixOS, fish, Elixir 1.18.4, nx 0.13.0/axon 0.8.1/polaris 0.1.0; exla commented out until the 5090. NEVER pipe test output through head/tail/grep — redirect to a file then read. No emojis. Prefer Elixir over Python for scripting (user called this out). Ask before non-obvious choices.
+- Edifice at /home/blewf/git/edifice (main, shared with exphil — see CLAUDE.md "Sharing edifice with exphil"); feature work in the /home/blewf/git/edifice-dev worktree.
 - PLAN.md is authoritative for design; §5.1 lists Edifice/Axon/Polaris gaps; §7 phases.
 </critical_context>
 
@@ -70,6 +71,6 @@ Tests: 67 tests + 3 doctests + 2 properties, 0 failures. Property generators now
 - Corpus: bach_chorales 370/370 (210,974 tokens); beethoven_quartets **71/71** (683,943 tokens, p50 9,688 / max 18,739). Both training-ready.
 - Vocab size 613. Frozen boundary intact (`{:dur, :"64th", 2}` == id 526).
 - Tests: 67 + 3 doctests + 2 properties, 0 failures (~3s, CPU).
-- Git: 8 commits on main, NO REMOTE YET (see work_remaining #1). Working tree clean except this file.
-- User is on the laptop (CPU-only); 5090 tasks blocked until home.
+- Git: pushed to github.com/blasphemetheus/fermata (origin), main.
+- Still CPU-only on this machine; 5090 tasks (Phase 0.5) pending.
 </current_state>

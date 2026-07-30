@@ -40,6 +40,30 @@ defmodule Fermata.Corpus do
       glob: "kern/*.krn",
       format: :kern,
       note: "stretch source: expect low parse coverage (divisi, tuplets)"
+    },
+    inventions: %{
+      repo: "https://github.com/humdrum-tools/inventions",
+      glob: "kern/*.krn",
+      format: :kern,
+      note: "Bach 2- and 3-part inventions — the most duet-shaped data there is"
+    },
+    wtc_fugues: %{
+      repo: "https://github.com/humdrum-tools/bach-wtc-fugues",
+      glob: "kern/*.krn",
+      format: :kern,
+      note: "WTC fugues with parts pre-split to separate staves"
+    },
+    haydn_quartets: %{
+      repo: "https://github.com/musedata/humdrum-haydn-quartets",
+      glob: "kern/*.krn",
+      format: :kern,
+      note: "210 quartet movements — Phase 2 core"
+    },
+    mozart_quartets: %{
+      repo: "https://github.com/musedata/humdrum-mozart-quartets",
+      glob: "kern/*.krn",
+      format: :kern,
+      note: "82 quartet movements — Phase 2 core"
     }
   }
 

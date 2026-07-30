@@ -92,7 +92,12 @@ needed.
 
 A **PDMX + OpenScore + KernScores + Mutopia** stack (~260K scores) is fully
 copyright-clean — a genuinely defensible "trained only on public domain"
-story, rare in this space. The orchestral corpora are the only license
+story, rare in this space. **Correction (2026-07-30 survey):** the
+KernScores/craigsapp encodings are CC BY-NC-SA 4.0, not plain PD — the
+works are PD, the encodings claim NC. See `docs/data-sources.md` for the
+full license-tiered inventory and `docs/composers.md` for the composer
+roster; the strictly clean stack is PDMX no_license_conflict + OpenScore
++ Polish Scores + Mutopia (PD/CC-BY slice) + BMdataset. The orchestral corpora are the only license
 compromise and can be quarantined to an optional fine-tune.
 
 Skip for now: Lakh/GigaMIDI/Aria-MIDI (performance MIDI, wrong modality),
