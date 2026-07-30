@@ -124,6 +124,13 @@ them.
 
 ## Environment
 
+`devenv.nix` (checked in; `devenv shell` or direnv) provides everything:
+Elixir/Erlang, and the renderers — verovio is built from source in a
+small derivation because nixpkgs lacks it. `.envrc`/`devenv.yaml` are
+hidden by the user's global gitignore; only `devenv.nix` is tracked.
+The shell uses a project-local MIX_HOME (`.nix-mix`), so run
+`mix local.hex --force && mix deps.get` once per machine inside it.
+
 Elixir 1.18.4, nx 0.13 / axon 0.8 / polaris 0.1. `exla` is commented out
 in `mix.exs` until the RTX 5090 box — when enabling it, export
 `XLA_TARGET=cuda12` **explicitly**, because autodetection silently falls
