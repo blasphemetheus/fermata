@@ -48,5 +48,8 @@ defmodule Fermata.VocabTest do
     assert t2i[{:tuplet, 11, 8}] == 613
     assert t2i[{:tuplet, 13, 8}] == 614
     assert t2i[{:tuplet, 15, 8}] == 615
+    # duration types added later (all dot counts) append after that
+    assert t2i[{:dur, :"128th", 0}] == 616
+    assert t2i[{:dur, :"128th", 3}] == 619
   end
 end

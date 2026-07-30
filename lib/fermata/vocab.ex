@@ -31,6 +31,7 @@ defmodule Fermata.Vocab do
   @max_parts 32
   @max_voices 8
   @frozen_tuplet_ratios [{3, 2}, {5, 4}, {7, 4}, {9, 8}]
+  @frozen_types [:breve, :whole, :half, :quarter, :eighth, :"16th", :"32nd", :"64th"]
   @octaves 0..8
   @alters -2..2
   @time_numerators 1..16
@@ -61,9 +62,10 @@ defmodule Fermata.Vocab do
           alter <- @alters,
           do: {:pitch, step, alter, octave}
 
-    # Frozen at 0..2 dots; triple dots are appended below, not inserted
-    # here, since this list sits inside the frozen id block.
-    durations = for type <- Duration.types(), dots <- 0..2, do: {:dur, type, dots}
+    # Frozen at the original eight types and 0..2 dots; triple dots and
+    # later types are appended below, not inserted here, since this list
+    # sits inside the frozen id block.
+    durations = for type <- @frozen_types, dots <- 0..2, do: {:dur, type, dots}
 
     phase_0 = specials ++ keys ++ times ++ clefs ++ instruments ++ parts ++ pitches ++ durations
 
@@ -74,13 +76,16 @@ defmodule Fermata.Vocab do
     # Duration: growing Duration.tuplet_ratios/0 in place would shift
     # the triple-dot ids below. Ratios added later append at the end.
     tuplets = for {actual, normal} <- @frozen_tuplet_ratios, do: {:tuplet, actual, normal}
-    triple_dots = for type <- Duration.types(), do: {:dur, type, 3}
+    triple_dots = for type <- @frozen_types, do: {:dur, type, 3}
 
     later_tuplets =
       for {actual, normal} <- Duration.tuplet_ratios() -- @frozen_tuplet_ratios,
           do: {:tuplet, actual, normal}
 
-    phase_0 ++ voices ++ later_instruments ++ tuplets ++ triple_dots ++ later_tuplets
+    later_types =
+      for type <- Duration.types() -- @frozen_types, dots <- 0..3, do: {:dur, type, dots}
+
+    phase_0 ++ voices ++ later_instruments ++ tuplets ++ triple_dots ++ later_tuplets ++ later_types
   end
 
   @doc "Map of token → integer id."

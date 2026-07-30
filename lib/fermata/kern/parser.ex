@@ -41,7 +41,8 @@ defmodule Fermata.Kern.Parser do
     8 => :eighth,
     16 => :"16th",
     32 => :"32nd",
-    64 => :"64th"
+    64 => :"64th",
+    128 => :"128th"
   }
 
   # Rest values usable for padding a late-starting voice, largest first.
@@ -344,21 +345,30 @@ defmodule Fermata.Kern.Parser do
 
   defp parse_note(text, chord?) do
     with {:ok, duration, tuplet} <- extract_duration(text) do
-      if String.contains?(text, "r") do
-        {:ok, %Rest{duration: duration, tuplet: tuplet}}
-      else
-        with {:ok, step, octave} <- extract_pitch(text) do
-          {:ok,
-           %Note{
-             step: step,
-             octave: octave,
-             alter: extract_alter(text),
-             duration: duration,
-             tie: extract_tie(text),
-             chord: chord?,
-             tuplet: tuplet
-           }}
-        end
+      cond do
+        String.contains?(text, "r") ->
+          {:ok, %Rest{duration: duration, tuplet: tuplet}}
+
+        # A duration + `yy` (invisible) with no pitch letters is a common
+        # converter slip for an invisible spacer rest (canonically `ryy`).
+        # The timing is unambiguous and no pitch exists to lose, so read
+        # it as the rest it stands for rather than refusing the file.
+        String.contains?(text, "yy") and not Regex.match?(~r/[a-gA-G]/, text) ->
+          {:ok, %Rest{duration: duration, tuplet: tuplet}}
+
+        true ->
+          with {:ok, step, octave} <- extract_pitch(text) do
+            {:ok,
+             %Note{
+               step: step,
+               octave: octave,
+               alter: extract_alter(text),
+               duration: duration,
+               tie: extract_tie(text),
+               chord: chord?,
+               tuplet: tuplet
+             }}
+          end
       end
     end
   end

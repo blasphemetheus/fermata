@@ -154,13 +154,12 @@ defmodule Fermata.Duration do
   constant has to be divisible by every fraction any supported duration
   can produce:
 
-    * 64 covers binary values down to a double-dotted 64th (7/64 of a
-      quarter), which is why that duration is now representable — it was
-      the one gap when divisions were 32.
+    * 256 covers binary values down to a double-dotted 128th (the
+      multiplier was 64 until polish_scores turned up real 128th notes).
     * the LCM of the supported tuplet counts (#{inspect([3, 5, 7, 9, 11, 13, 15])})
       covers dividing a beat into thirds through fifteenths.
 
-  Hence #{64 * 45045} per quarter. It makes for large numbers in the XML
+  Hence #{256 * 45045} per quarter. It makes for large numbers in the XML
   and costs nothing else — the IR itself stores durations symbolically,
   so divisions only exist at the MusicXML boundary and in internal
   offset arithmetic. Supporting further tuplet counts means adding them
@@ -177,9 +176,11 @@ defmodule Fermata.Duration do
   @tuplet_ratios [{3, 2}, {5, 4}, {7, 4}, {9, 8}, {11, 8}, {13, 8}, {15, 8}]
 
   @tuplet_lcm Enum.reduce(@tuplet_actuals, 1, fn a, acc -> div(acc * a, Integer.gcd(acc, a)) end)
-  @divisions 64 * @tuplet_lcm
+  @divisions 256 * @tuplet_lcm
 
-  @types [:breve, :whole, :half, :quarter, :eighth, :"16th", :"32nd", :"64th"]
+  # Append-only: Fermata.Vocab freezes token ids for the first eight
+  # types by value and appends later ones at the vocab's end.
+  @types [:breve, :whole, :half, :quarter, :eighth, :"16th", :"32nd", :"64th", :"128th"]
   @base %{
     breve: @divisions * 8,
     whole: @divisions * 4,
@@ -188,12 +189,14 @@ defmodule Fermata.Duration do
     eighth: div(@divisions, 2),
     "16th": div(@divisions, 4),
     "32nd": div(@divisions, 8),
-    "64th": div(@divisions, 16)
+    "64th": div(@divisions, 16),
+    "128th": div(@divisions, 32)
   }
 
   @max_dots 3
 
-  @type type :: :breve | :whole | :half | :quarter | :eighth | :"16th" | :"32nd" | :"64th"
+  @type type ::
+          :breve | :whole | :half | :quarter | :eighth | :"16th" | :"32nd" | :"64th" | :"128th"
   @type t :: {type(), 0..3}
   @type tuplet :: {pos_integer(), pos_integer()} | nil
 
