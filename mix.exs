@@ -30,7 +30,7 @@ defmodule Fermata.MixProject do
       {:nx, "~> 0.13"},
       {:axon, "~> 0.8"},
       {:polaris, "~> 0.1"},
-      # {:exla, "~> 0.13"},  # enable on the 5090 box; XLA_TARGET=cuda12
+      {:exla, "~> 0.13"},
       {:stream_data, "~> 1.1", only: [:test, :dev]}
     ]
   end

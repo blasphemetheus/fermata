@@ -38,3 +38,4 @@ fermata-*.tar
 /.nix-mix/
 /.nix-hex/
 devenv.lock
+/.nvshmem/
