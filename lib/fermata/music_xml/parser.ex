@@ -278,7 +278,13 @@ defmodule Fermata.MusicXML.Parser do
   end
 
   defp end_element("measure", _text, %{cur_measure: %Measure{} = m} = state) do
-    events = state.cur_events |> Enum.reverse() |> regroup_voices(state.divisions)
+    events =
+      try do
+        state.cur_events |> Enum.reverse() |> regroup_voices(state.divisions)
+      catch
+        {:refuse, reason} -> throw({:refuse, {reason, {:measure, m.number}}})
+      end
+
     m = %{m | events: events, clef: normalize_clef(m.clef)}
 
     parts = Map.update(state.parts, state.cur_part_id, [m], &[m | &1])
@@ -366,6 +372,9 @@ defmodule Fermata.MusicXML.Parser do
   end
 
   defp build_events(note, divisions) do
+    # No pitch and no rest: an <unpitched> percussion note.
+    if not is_map_key(note, :step), do: throw({:refuse, :unpitched_note})
+
     [
       %Note{
         step: Map.fetch!(note, :step),

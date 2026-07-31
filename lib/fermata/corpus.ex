@@ -82,6 +82,15 @@ defmodule Fermata.Corpus do
       glob: "musicxml/*.musicxml",
       format: :musicxml,
       note: "122 quartets, CC0 — run scripts/convert_mscx.exs after download (mscx -> MusicXML)"
+    },
+    pdmx: %{
+      manual:
+        "curl Zenodo record 15571083: mxl.tar.gz + subset_paths.tar.gz (+ PDMX.csv), " <>
+          "then tar xzf both in data/raw/pdmx/",
+      subset: "subset_paths/no_license_conflict.txt",
+      glob: "mxl/**/*.mxl",
+      format: :mxl,
+      note: "222,856 PD/CC0 MusicXML scores — the Phase 1/2 bulk (see docs/data-sources.md)"
     }
   }
 
@@ -98,15 +107,22 @@ defmodule Fermata.Corpus do
     spec = Map.fetch!(@sources, source)
     dir = raw_dir(source)
 
-    if File.dir?(Path.join(dir, ".git")) do
-      {:ok, :already_downloaded}
-    else
-      File.mkdir_p!(Path.dirname(dir))
+    cond do
+      spec[:manual] ->
+        if File.dir?(dir),
+          do: {:ok, :already_downloaded},
+          else: {:error, {:manual_download_required, spec.manual}}
 
-      case System.cmd("git", ["clone", "--depth", "1", spec.repo, dir], stderr_to_stdout: true) do
-        {_, 0} -> {:ok, :downloaded}
-        {out, code} -> {:error, {:git_clone_failed, code, out}}
-      end
+      File.dir?(Path.join(dir, ".git")) ->
+        {:ok, :already_downloaded}
+
+      true ->
+        File.mkdir_p!(Path.dirname(dir))
+
+        case System.cmd("git", ["clone", "--depth", "1", spec.repo, dir], stderr_to_stdout: true) do
+          {_, 0} -> {:ok, :downloaded}
+          {out, code} -> {:error, {:git_clone_failed, code, out}}
+        end
     end
   end
 
@@ -120,13 +136,35 @@ defmodule Fermata.Corpus do
   """
   def ingest(source) do
     spec = Map.fetch!(@sources, source)
-    files = Path.wildcard(Path.join(raw_dir(source), spec.glob)) |> Enum.sort()
+    files = source_files(source, spec)
 
     if files == [] do
       {:error, {:no_files, "nothing matches #{spec.glob} under #{raw_dir(source)} — run download first"}}
     else
       ingest_files(files, corpus_dir(source), spec.format)
     end
+  end
+
+  # With a :subset file (PDMX), ingest only the listed scores. The lists
+  # name the JSON modality (./data/x/y/<id>.json); map to the .mxl tree.
+  defp source_files(source, %{subset: subset} = _spec) do
+    subset_path = Path.join(raw_dir(source), subset)
+
+    subset_path
+    |> File.read!()
+    |> String.split("\n", trim: true)
+    |> Enum.map(fn line ->
+      line
+      |> String.replace_prefix("./data/", "mxl/")
+      |> String.replace_suffix(".json", ".mxl")
+      |> then(&Path.join(raw_dir(source), &1))
+    end)
+    |> Enum.filter(&File.exists?/1)
+    |> Enum.sort()
+  end
+
+  defp source_files(source, spec) do
+    Path.wildcard(Path.join(raw_dir(source), spec.glob)) |> Enum.sort()
   end
 
   @doc """
@@ -138,12 +176,18 @@ defmodule Fermata.Corpus do
     File.mkdir_p!(out_dir)
     bin_path = Path.join(out_dir, "tokens.bin")
 
+    # Parse + tokenize across all cores; the ordered stream keeps the
+    # single writer's offsets deterministic (same input -> same shard).
     {entries, errors, _offset} =
       File.open!(bin_path, [:write, :raw, :binary], fn io ->
-        Enum.reduce(files, {[], [], 0}, fn file, {entries, errors, offset} ->
-          key = Path.basename(file)
-
-          case tokenize_file(file, format) do
+        files
+        |> Task.async_stream(
+          fn file -> {Path.basename(file), tokenize_file(file, format)} end,
+          ordered: true,
+          timeout: :timer.minutes(5)
+        )
+        |> Enum.reduce({[], [], 0}, fn {:ok, {key, result}}, {entries, errors, offset} ->
+          case result do
             {:ok, ids} ->
               bin = pack_ids(ids)
               :ok = :file.write(io, bin)
@@ -179,6 +223,32 @@ defmodule Fermata.Corpus do
 
   defp parse_file(file, :kern), do: Kern.Parser.parse(File.read!(file))
   defp parse_file(file, :musicxml), do: MusicXML.Parser.parse(File.read!(file))
+
+  # .mxl is a ZIP container; the score is the member the container's
+  # META-INF points at — in practice the one XML file outside META-INF.
+  defp parse_file(file, :mxl) do
+    with {:ok, xml} <- extract_mxl(file), do: MusicXML.Parser.parse(xml)
+  end
+
+  defp extract_mxl(file) do
+    case :zip.extract(String.to_charlist(file), [:memory]) do
+      {:ok, entries} ->
+        entries
+        |> Enum.find(fn {name, _content} ->
+          name = to_string(name)
+
+          not String.starts_with?(name, "META-INF") and
+            (String.ends_with?(name, ".xml") or String.ends_with?(name, ".musicxml"))
+        end)
+        |> case do
+          {_name, content} -> {:ok, content}
+          nil -> {:error, {:mxl_no_score_member, Path.basename(file)}}
+        end
+
+      {:error, reason} ->
+        {:error, {:mxl_unzip_failed, reason}}
+    end
+  end
 
   @doc "Load a corpus index written by `ingest/1`."
   def load_index(source_or_dir) do

@@ -237,7 +237,7 @@ defmodule Fermata.MusicXMLTest do
             n("D", 5, 16, "quarter", 1)
         )
 
-      assert {:error, {:overlapping_voice, 1}} = MusicXML.Parser.parse(xml)
+      assert {:error, {{:overlapping_voice, 1}, {:measure, 1}}} = MusicXML.Parser.parse(xml)
     end
 
     test "a gap the divisions cannot express is refused" do
@@ -254,7 +254,7 @@ defmodule Fermata.MusicXMLTest do
           "<divisions>17</divisions>"
         )
 
-      assert {:error, {:unrepresentable_offset, 5}} = MusicXML.Parser.parse(xml)
+      assert {:error, {{:unrepresentable_offset, 5}, {:measure, 1}}} = MusicXML.Parser.parse(xml)
     end
   end
 end

@@ -24,6 +24,31 @@ defmodule Fermata.CorpusTest do
     assert Corpus.read_sequence(dir, entry) == expected
   end
 
+  test "ingests .mxl (zipped MusicXML) files", %{dir: dir} do
+    {:ok, score} = Kern.Parser.parse(File.read!(@chorale))
+    xml = Fermata.MusicXML.Writer.to_xml(score)
+
+    mxl = Path.join(System.tmp_dir!(), "chor_#{System.unique_integer([:positive])}.mxl")
+
+    {:ok, _} =
+      :zip.create(
+        String.to_charlist(mxl),
+        [
+          {~c"META-INF/container.xml", "<container/>"},
+          {~c"score.xml", xml}
+        ]
+      )
+
+    on_exit(fn -> File.rm!(mxl) end)
+
+    {:ok, index} = Corpus.ingest_files([mxl], dir, :mxl)
+
+    assert [%{tokens: n} = entry] = index.entries
+    assert index.errors == []
+    assert n == length(Tokenizer.encode_ids!(score))
+    assert Corpus.read_sequence(dir, entry) == Tokenizer.encode_ids!(score)
+  end
+
   test "ingest_files records parse failures with typed reasons", %{dir: dir} do
     bad = Path.join(System.tmp_dir!(), "bad_#{System.unique_integer([:positive])}.krn")
     # A 17-tuplet: past the ratios the fixed divisions can express, so
