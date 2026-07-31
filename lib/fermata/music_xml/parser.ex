@@ -421,10 +421,18 @@ defmodule Fermata.MusicXML.Parser do
   defp normalize_clef(nil), do: nil
   defp normalize_clef({"G", 2, 0}), do: :treble
   defp normalize_clef({"G", 2, -1}), do: :treble_8vb
+  defp normalize_clef({"G", 2, 1}), do: :treble_8va
+  defp normalize_clef({"G", 2, 2}), do: :treble_15ma
+  defp normalize_clef({"G", 1, 0}), do: :french_violin
   defp normalize_clef({"F", 4, 0}), do: :bass
+  defp normalize_clef({"F", 4, -1}), do: :bass_8vb
+  defp normalize_clef({"F", 4, 1}), do: :bass_8va
+  defp normalize_clef({"F", 3, 0}), do: :baritone
+  defp normalize_clef({"C", 1, 0}), do: :soprano
+  defp normalize_clef({"C", 2, 0}), do: :mezzo_soprano
   defp normalize_clef({"C", 3, 0}), do: :alto
   defp normalize_clef({"C", 4, 0}), do: :tenor
-  # French violin clef, percussion, tablature... — not in the IR.
+  # Percussion, tablature, and rarities the IR does not model.
   defp normalize_clef(other), do: throw({:refuse, {:unsupported_clef, other}})
 
   defp update_measure(%{cur_measure: %Measure{} = m} = state, fun),

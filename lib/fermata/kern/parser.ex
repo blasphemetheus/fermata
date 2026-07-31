@@ -238,7 +238,13 @@ defmodule Fermata.Kern.Parser do
       case clef do
         "G2" -> :treble
         "Gv2" -> :treble_8vb
+        "G^2" -> :treble_8va
+        "G1" -> :french_violin
         "F4" -> :bass
+        "Fv4" -> :bass_8vb
+        "F3" -> :baritone
+        "C1" -> :soprano
+        "C2" -> :mezzo_soprano
         "C3" -> :alto
         "C4" -> :tenor
         _ -> nil
@@ -372,6 +378,17 @@ defmodule Fermata.Kern.Parser do
   # Returns {:ok, {type, dots}, tuplet}.
   defp extract_duration(text) do
     case Regex.run(~r/(\d+)(\.*)/, text) do
+      # Zero-runs are longer-than-whole values, not reciprocals: 0 is a
+      # breve, 00 a long, 000 a maxima. String.to_integer would silently
+      # read every one of them as 0 (breve).
+      [_, "00" <> extra, dots] when extra in ["", "0"] ->
+        if extra == "" do
+          duration = {:long, String.length(dots)}
+          if Duration.exact?(duration), do: {:ok, duration, nil}, else: {:error, {:unrepresentable_duration, "00" <> dots}}
+        else
+          {:error, {:unsupported_duration, :maxima}}
+        end
+
       [_, recip, dots] ->
         recip_value = String.to_integer(recip)
 

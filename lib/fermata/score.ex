@@ -71,7 +71,19 @@ defmodule Fermata.Measure do
           events: [Fermata.Note.t() | Fermata.Rest.t()]
         }
 
-  @clefs [:treble, :bass, :alto, :tenor, :treble_8vb]
+  # Append-only: Fermata.Vocab freezes token ids for the first five by
+  # value and appends later clefs at the vocab's end.
+  @clefs [:treble, :bass, :alto, :tenor, :treble_8vb] ++
+           [
+             :soprano,
+             :mezzo_soprano,
+             :baritone,
+             :treble_8va,
+             :treble_15ma,
+             :bass_8vb,
+             :bass_8va,
+             :french_violin
+           ]
   def clefs, do: @clefs
 
   @doc """
@@ -197,11 +209,12 @@ defmodule Fermata.Duration do
   @tuplet_ratios @canonical_ratios ++ @extended_ratios ++ @extended_ratios_2
 
   @tuplet_lcm Enum.reduce(@tuplet_actuals, 1, fn a, acc -> div(acc * a, Integer.gcd(acc, a)) end)
-  @divisions 256 * @tuplet_lcm
+  @divisions 512 * @tuplet_lcm
 
   # Append-only: Fermata.Vocab freezes token ids for the first eight
   # types by value and appends later ones at the vocab's end.
-  @types [:breve, :whole, :half, :quarter, :eighth, :"16th", :"32nd", :"64th", :"128th"]
+  @types [:breve, :whole, :half, :quarter, :eighth, :"16th", :"32nd", :"64th", :"128th"] ++
+           [:"256th", :long]
   @base %{
     breve: @divisions * 8,
     whole: @divisions * 4,
@@ -211,14 +224,26 @@ defmodule Fermata.Duration do
     "16th": div(@divisions, 4),
     "32nd": div(@divisions, 8),
     "64th": div(@divisions, 16),
-    "128th": div(@divisions, 32)
+    "128th": div(@divisions, 32),
+    "256th": div(@divisions, 64),
+    long: @divisions * 16
   }
 
   # MuseScore permits four dots; they appear in real corpora.
   @max_dots 4
 
   @type type ::
-          :breve | :whole | :half | :quarter | :eighth | :"16th" | :"32nd" | :"64th" | :"128th"
+          :long
+          | :breve
+          | :whole
+          | :half
+          | :quarter
+          | :eighth
+          | :"16th"
+          | :"32nd"
+          | :"64th"
+          | :"128th"
+          | :"256th"
   @type t :: {type(), 0..4}
   @type tuplet :: {pos_integer(), pos_integer()} | nil
 
@@ -321,8 +346,8 @@ defmodule Fermata.Duration do
   smallest count of that ratio's grain that makes the binary part whole,
   each part then decomposing greedily and exactly.
   """
-  @units for type <- @types, do: {Map.fetch!(@base, type), type}
-  @smallest @types |> List.last() |> then(&Map.fetch!(@base, &1))
+  @units @types |> Enum.map(&{Map.fetch!(@base, &1), &1}) |> Enum.sort(:desc)
+  @smallest @base |> Map.values() |> Enum.min()
 
   def decompose_rests(0), do: {:ok, []}
 
@@ -358,17 +383,27 @@ defmodule Fermata.Duration do
     Enum.find_value(@canonical_ratios, :error, fn {actual, normal} = ratio ->
       grain = div(@smallest * normal, actual)
 
-      Enum.find_value(1..(actual - 1), fn k ->
-        binary_part = divisions - k * grain
-
-        with true <- binary_part >= 0 and rem(binary_part, @smallest) == 0,
-             {binary, 0} <- binary_span(binary_part, nil),
-             {tuplets, 0} <- binary_span(k * grain, ratio) do
-          {:ok, binary ++ tuplets}
-        else
+      # A span that IS a run of one ratio's rests (a third of a beat is
+      # one triplet-eighth rest) reads far better than a mixed split, so
+      # try the pure decomposition before the binary + k-grains form.
+      pure =
+        case binary_span(divisions, ratio) do
+          {rests, 0} -> {:ok, rests}
           _ -> nil
         end
-      end)
+
+      pure ||
+        Enum.find_value(1..(actual - 1), fn k ->
+          binary_part = divisions - k * grain
+
+          with true <- binary_part >= 0 and rem(binary_part, @smallest) == 0,
+               {binary, 0} <- binary_span(binary_part, nil),
+               {tuplets, 0} <- binary_span(k * grain, ratio) do
+            {:ok, binary ++ tuplets}
+          else
+            _ -> nil
+          end
+        end)
     end)
   end
 end

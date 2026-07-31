@@ -89,7 +89,7 @@ defmodule Mix.Tasks.Fermata.Corpus do
       Mix.shell().info("Failures by reason:")
 
       Enum.each(s.failure_reasons, fn {reason, count} ->
-        Mix.shell().info("  #{count}  #{reason}")
+        Mix.shell().info("  #{count}  #{inspect(reason)}")
       end)
     end
   end

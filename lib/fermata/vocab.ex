@@ -38,6 +38,7 @@ defmodule Fermata.Vocab do
   @appended_tuplet_ratios [{11, 8}, {13, 8}, {15, 8}]
   @appended_types [:"128th"]
   @appended_extended_ratios [{2, 1}, {2, 3}, {4, 3}, {4, 6}, {5, 2}, {5, 3}, {6, 4}, {7, 1}, {7, 8}]
+  @frozen_clefs [:treble, :bass, :alto, :tenor, :treble_8vb]
   @octaves 0..8
   @alters -2..2
   @time_numerators 1..16
@@ -54,7 +55,7 @@ defmodule Fermata.Vocab do
     times =
       for n <- @time_numerators, d <- @time_denominators, do: {:time, n, d}
 
-    clefs = for c <- Measure.clefs(), do: {:clef, c}
+    clefs = for c <- @frozen_clefs, do: {:clef, c}
     # Only the frozen Phase 0 instruments sit here. Instruments added
     # later append at the very end, because inserting a token *inside*
     # this block would shift the id of every pitch and duration token
@@ -104,11 +105,13 @@ defmodule Fermata.Vocab do
           dots <- 0..Duration.max_dots(),
           do: {:dur, type, dots}
 
+    newest_clefs = for c <- Measure.clefs() -- @frozen_clefs, do: {:clef, c}
+
     phase_0 ++
       voices ++
       later_instruments ++
       tuplets ++ triple_dots ++ later_tuplets ++ later_types ++
-      extended_tuplets ++ quad_dots ++ newest_tuplets ++ newest_types
+      extended_tuplets ++ quad_dots ++ newest_tuplets ++ newest_types ++ newest_clefs
   end
 
   @doc "Map of token → integer id."

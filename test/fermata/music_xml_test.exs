@@ -240,6 +240,23 @@ defmodule Fermata.MusicXMLTest do
       assert {:error, {{:overlapping_voice, 1}, {:measure, 1}}} = MusicXML.Parser.parse(xml)
     end
 
+    test "a tuplet-sized forward gap pads with tuplet rests" do
+      # divisions=12 -> 4 divisions is a third of a beat: a triplet rest
+      xml =
+        String.replace(
+          doc(
+            n("C", 5, 12, "quarter", 1) <>
+              "<forward><duration>4</duration></forward>" <>
+              n("D", 5, 8, "quarter", 1)
+          ),
+          "<divisions>16</divisions>",
+          "<divisions>12</divisions>"
+        )
+
+      assert {:ok, %Score{parts: [%Part{measures: [m]}]}} = MusicXML.Parser.parse(xml)
+      assert [%Note{step: :C}, %Rest{tuplet: {3, 2}}, %Note{step: :D}] = m.events
+    end
+
     test "a gap the divisions cannot express is refused" do
       # divisions=16 -> a 1-division forward is a 64th, fine; use
       # divisions=17 to force an inexpressible offset

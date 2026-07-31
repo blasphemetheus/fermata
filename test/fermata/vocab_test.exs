@@ -60,5 +60,10 @@ defmodule Fermata.VocabTest do
     # second extended-ratio sweep lands at the global end
     assert t2i[{:tuplet, 7, 6}] == 638
     assert t2i[{:tuplet, 35, 16}] == 647
+    # 256th + long durations (all dot counts), then the late clefs
+    assert t2i[{:dur, :"256th", 0}] == 648
+    assert t2i[{:dur, :long, 4}] == 657
+    assert t2i[{:clef, :soprano}] == 658
+    assert t2i[{:clef, :french_violin}] == 665
   end
 end

@@ -217,14 +217,29 @@ defmodule Fermata.MusicXML.Writer do
     ]
   end
 
-  defp clef(nil), do: []
-  defp clef(:treble), do: "<clef><sign>G</sign><line>2</line></clef>\n"
-  defp clef(:bass), do: "<clef><sign>F</sign><line>4</line></clef>\n"
-  defp clef(:alto), do: "<clef><sign>C</sign><line>3</line></clef>\n"
-  defp clef(:tenor), do: "<clef><sign>C</sign><line>4</line></clef>\n"
+  @clef_signs %{
+    treble: {"G", 2, 0},
+    treble_8vb: {"G", 2, -1},
+    treble_8va: {"G", 2, 1},
+    treble_15ma: {"G", 2, 2},
+    french_violin: {"G", 1, 0},
+    bass: {"F", 4, 0},
+    bass_8vb: {"F", 4, -1},
+    bass_8va: {"F", 4, 1},
+    baritone: {"F", 3, 0},
+    soprano: {"C", 1, 0},
+    mezzo_soprano: {"C", 2, 0},
+    alto: {"C", 3, 0},
+    tenor: {"C", 4, 0}
+  }
 
-  defp clef(:treble_8vb),
-    do: "<clef><sign>G</sign><line>2</line><clef-octave-change>-1</clef-octave-change></clef>\n"
+  defp clef(nil), do: []
+
+  defp clef(atom) do
+    {sign, line, oct} = Map.fetch!(@clef_signs, atom)
+    change = if oct == 0, do: "", else: "<clef-octave-change>#{oct}</clef-octave-change>"
+    "<clef><sign>#{sign}</sign><line>#{line}</line>#{change}</clef>\n"
+  end
 
   # Element order follows the DTD content model: duration, tie, voice,
   # type, dot, time-modification, notations.
